@@ -30,13 +30,13 @@ From raw data ingestion to complex multi-stream joins, aggregations, and schedul
 │               │                                                    │             │
 │               └─────────────────────────┐                          │             │
 │                                         ▼                          ▼             │
-│  ┌─────────────────────────┐   ┌───────────────────────────────────────────────┐ │
-│  │   Checkpointer Engine   │   │            Compute Transformations            │ │
-│  │                         │   │                                               │ │
-│  │ • Periodic Snapshots    │   │ • Zero-Copy DuckDB Scheduled SQL Pipelines    │ │
-│  │ • Parquet Disk Backup   │   │ • Multi-Stream Relational Joins & Aggregations│ │
-│  │ • Auto Startup Recovery │   │ • Vectorized TTL Pruning (Age / Row Count)    │ │
-│  └─────────────────────────┘   └───────────────────────────────────────────────┘ │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐ │
+│  │                           Compute Transformations                           │ │
+│  │                                                                             │ │
+│  │ • Zero-Copy DuckDB Scheduled SQL Pipelines                                  │ │
+│  │ • Multi-Stream Relational Joins & Aggregations                              │ │
+│  │ • Vectorized TTL Pruning (Age / Row Count)                                  │ │
+│  └─────────────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,19 +64,16 @@ Configure `RillEngine(memory_budget_bytes=...)` or `memory_budget_mb=...` along 
 ### 5. Multi-Stream Joins & Aggregations (`TableJoinTask`)
 Continuously join two live stream tables (`left_table`, `right_table`) via C++ relational hash-joins (`pc.is_in` / `Table.join`) and calculate real-time aggregations (`sum`, `count`, `avg`, `min`, `max`) without exiting PyArrow memory.
 
-### 6. Persistent Checkpointing (`Checkpointer`)
-Configure `RillEngine(checkpoint_dir="checkpoints/", checkpoint_interval_seconds=60)` to periodically dump zero-copy Parquet snapshots (`pa.parquet.write_table`) of all registered tables to disk. On startup (`engine.start()`), Rill automatically recovers state from previous snapshots before starting connectors.
-
-### 7. Bounded Connector Backpressure
+### 6. Bounded Connector Backpressure
 Input connectors (`MemoryConnector`, `JSONStreamConnector`) enforce configurable limits (`max_buffer_records`, `max_buffer_bytes`) paired with overflow strategies (`"drop_oldest"`, `"drop_newest"`, `"error"`) that slice excess data cleanly across batch boundaries.
 
-### 8. DuckDB Zero-Copy SQL Pipelines
+### 7. DuckDB Zero-Copy SQL Pipelines
 Execute standard SQL queries across any live `pyarrow.Table` using zero-copy DuckDB (`duckdb.query`). Attach **Scheduled SQL Tasks** (`ScheduledSQLTask`) to continuously transform live data streams into new dynamic tables at precise intervals.
 
-### 9. Quack Server & WebSocket Bridge (`quack:0.0.0.0:9494`)
+### 8. Quack Server & WebSocket Bridge (`quack:0.0.0.0:9494`)
 Expose all internal Rill tables and real-time engine telemetry over native TCP/IP using the **Quack Protocol**. When enabled via `engine.start(quack_port=9494, quack_token="secure_token")`, Rill starts a background server thread that allows external tools, worker processes, and dashboards to securely query live PyArrow memory with zero-copy shared memory semantics.
 
-### 10. Dynamic Business Metrics & KPIs (`register_business_metric`)
+### 9. Dynamic Business Metrics & KPIs (`register_business_metric`)
 Register custom PyArrow analytical formulas (`engine.register_business_metric(name, formula_fn)`) that evaluate in real-time on every micro-batch tick. These metrics automatically calculate domain KPIs—such as maximum order tickets, cumulative revenue, and cancellation ratios—without writing ad-hoc polling loops.
 
 ---
@@ -216,7 +213,7 @@ engine.stop()
 
 ---
 
-## 🌟 Advanced Example: Multi-Stream Joins & Checkpointing
+## 🌟 Advanced Example: Multi-Stream Joins
 
 See our complete end-to-end multi-stream demo inside `examples/`:
 
@@ -227,13 +224,12 @@ python3 examples/multi_stream_join_demo.py
 This demo illustrates:
 - Joining a live `user_profiles` table with a continuous `orders` stream into `orders_enriched`.
 - Calculating regional revenue aggregations via DuckDB SQL every second.
-- Persisting and recovering state via Parquet snapshots.
 
 ---
 
 ## 🧪 Running Tests
 
-Rill is verified by a thorough unit and integration test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, checkpoints, and zero-copy joins:
+Rill is verified by a thorough unit and integration test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, and zero-copy joins:
 
 ```bash
 pytest tests/ -v
