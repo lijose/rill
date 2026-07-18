@@ -73,6 +73,51 @@ Input connectors (`MemoryConnector`, `JSONStreamConnector`) enforce configurable
 ### 8. DuckDB Zero-Copy SQL Pipelines
 Execute standard SQL queries across any live `pyarrow.Table` using zero-copy DuckDB (`duckdb.query`). Attach **Scheduled SQL Tasks** (`ScheduledSQLTask`) to continuously transform live data streams into new dynamic tables at precise intervals.
 
+### 9. Quack Server & WebSocket Bridge (`quack:0.0.0.0:9494`)
+Expose all internal Rill tables and real-time engine telemetry over native TCP/IP using the **Quack Protocol**. When enabled via `engine.start(quack_port=9494, quack_token="secure_token")`, Rill starts a background server thread that allows external tools, worker processes, and dashboards to securely query live PyArrow memory with zero-copy shared memory semantics.
+
+### 10. Dynamic Business Metrics & KPIs (`register_business_metric`)
+Register custom PyArrow analytical formulas (`engine.register_business_metric(name, formula_fn)`) that evaluate in real-time on every micro-batch tick. These metrics automatically calculate domain KPIs—such as maximum order tickets, cumulative revenue, and cancellation ratios—without writing ad-hoc polling loops.
+
+---
+
+## 📊 Live Business Intelligence & Quack Dashboard
+
+Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & System Monitoring Dashboard** built with Node.js, WebSocket Quack Bridge (`quack_worker.py`), and Chart.js.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        NODE.JS / BROWSER DASHBOARD                              │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │ 💎 Key Business Intelligence & Formulas (Live PyArrow Evaluated)          │  │
+│  │  [ max_order_amount ($): $497.34 ]  [ total_revenue ($): $13,025.21 ]     │  │
+│  │  [ cancelled_ratio: 26.5% ]                                               │  │
+│  │  📈 Business Trend Line Plot          📊 Business Distribution Histogram  │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │ ⚙️ Engine Infrastructure & Resource Utilization                           │  │
+│  │  💻 CPU: 37.6% | 💾 RAM: 3.6 GB | 🏹 PyArrow: 12.47 MB | ⚡ Latency: 17ms│  │
+│  │  📊 System Resource History (CPU / Memory Trend Graph)                    │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────▲────────────────────────────────────────┘
+                                         │ WebSocket JSON Stream
+┌────────────────────────────────────────▼────────────────────────────────────────┐
+│                        NODE.JS QUACK BRIDGE SERVER                              │
+│                     (dashboard/server.js + quack_worker.py)                     │
+└────────────────────────────────────────▲────────────────────────────────────────┘
+                                         │ Native Quack Protocol (TCP Socket)
+┌────────────────────────────────────────▼────────────────────────────────────────┐
+│                     RILL STREAMING ENGINE (`quack:9494`)                        │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Dashboard Highlights:
+- **💎 Business Intelligence Centerpiece**: Prominently displays custom KPIs (`max_order_amount`, `total_revenue`, `cancelled_ratio`) right at the top.
+- **Interactive Business Charts**: Includes a real-time **Line Chart** plotting numerical KPI trends over time, alongside a **Histogram / Bar Chart** comparing snapshot distributions across formulas.
+- **⚙️ Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, throughput (RPS), and step latency into a dedicated secondary monitoring section.
+- **Multi-Tab Connections**: Connect to and switch between multiple remote or local Rill/Quack instances (`quack:ip:port`) inside a single UI.
+- **Dynamic Time Range Control**: Filter live charts across flexible historical intervals (`Last 30s`, `Last 60s`, `Last 90s`, `Last 180s`, `Last 300s`, or `All stored`).
+
 ---
 
 ## 🚀 Quickstart Guide
@@ -87,11 +132,31 @@ cd rill
 pip install -e .[dev,connectors]
 ```
 
-### Basic Micro-Batching & DuckDB SQL Pipeline
+### 1. Running the Live Dashboard & Quack Demo
+
+Step 1: Launch the Rill engine with live simulated orders and custom business metrics:
+```bash
+python3 examples/quack_dashboard_demo.py
+```
+*(Note your `quack:127.0.0.1:9494` address and auth token printed in the terminal).*
+
+Step 2: In a separate terminal, start the Node.js Dashboard Bridge:
+```bash
+cd dashboard
+npm install
+npm start
+```
+
+Step 3: Open your browser to `http://localhost:3000`, enter `quack:127.0.0.1:9494` and your token, and click **Connect Console**!
+
+---
+
+### 2. Basic Micro-Batching & DuckDB SQL Pipeline
 
 ```python
 import time
 import pyarrow as pa
+import pyarrow.compute as pc
 from rill import RillEngine, MemoryConnector, ScheduledSQLTask, RetentionPolicy, schema
 
 # 1. Initialize Rill Engine with a 200ms micro-batch interval and 500 MB memory budget
@@ -106,12 +171,14 @@ orders_schema = schema([
 
 engine.register_table("orders", schema=orders_schema)
 
-# 3. Register an Append-Only logs table with MANDATORY TTL
-engine.register_table(
-    "raw_logs",
-    mode="append",
-    retention_policy=RetentionPolicy(max_age_seconds=60) # Prune events older than 60s
-)
+# 3. Register custom live PyArrow Business Metrics evaluated on every tick
+def calc_max_order(engine):
+    table = engine.get_table("orders").to_arrow()
+    if table.num_rows == 0:
+        return 0.0
+    return pc.max(table.column("amount")).as_py()
+
+engine.register_business_metric("max_order_amount ($)", calc_max_order)
 
 # 4. Attach memory connector to 'orders' table
 connector = MemoryConnector(target_table="orders")
@@ -126,8 +193,8 @@ sql_task = ScheduledSQLTask(
 )
 engine.add_sql_task(sql_task)
 
-# 6. Start engine processing loop
-engine.start()
+# 6. Start engine and Quack server (`quack:0.0.0.0:9494`)
+engine.start(quack_port=9494, quack_token="secret_token")
 
 # Push incoming events directly to connector
 batch = pa.RecordBatch.from_pydict({
@@ -139,9 +206,10 @@ connector.push(batch)
 
 time.sleep(1.2)
 
-# Retrieve finalized zero-copy C++ PyArrow tables
+# Retrieve finalized zero-copy C++ PyArrow tables and business metrics
 revenue_summary = engine.get_table("revenue_by_tier").to_arrow()
 print("Live Revenue Summary:\n", revenue_summary.to_pandas())
+print("Live Business Metrics:", engine.evaluate_business_metrics())
 
 engine.stop()
 ```
@@ -165,7 +233,7 @@ This demo illustrates:
 
 ## 🧪 Running Tests
 
-Rill is verified by a thorough 27-case unit and integration test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, checkpoints, and zero-copy joins:
+Rill is verified by a thorough unit and integration test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, checkpoints, and zero-copy joins:
 
 ```bash
 pytest tests/ -v
