@@ -1,4 +1,4 @@
-# <img src="dashboard/public/logo.jpg" align="right" width="90" alt="Rill Logo"> Rill Streaming Engine (`rill`)
+# <img src="dashboard/public/logo.png" align="right" width="90" alt="Rill Logo"> Rill Streaming Engine (`rill`)
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyArrow](https://img.shields.io/badge/Powered%20by-PyArrow-orange.svg)](https://arrow.apache.org/)
