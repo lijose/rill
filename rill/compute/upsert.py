@@ -11,14 +11,26 @@ import pyarrow.compute as pc
 def _extract_key_array(table: pa.Table, keys: Union[str, List[str]]) -> Union[pa.Array, pa.ChunkedArray]:
     """
     Extracts key column(s) from a PyArrow Table as an Array or StructArray for comparison.
+    Decodes dictionary keys if present to ensure uniform comparison across batches.
     """
     if isinstance(keys, str):
-        return table.column(keys)
+        col = table.column(keys)
+        if pa.types.is_dictionary(col.type):
+            col = pc.dictionary_decode(col)
+        return col
     elif isinstance(keys, (list, tuple)):
         if len(keys) == 1:
-            return table.column(keys[0])
-        # For composite keys, combine into a StructArray
-        arrays = [table.column(k).combine_chunks() for k in keys]
+            col = table.column(keys[0])
+            if pa.types.is_dictionary(col.type):
+                col = pc.dictionary_decode(col)
+            return col
+        # For composite keys, combine into a StructArray, decoding dictionary fields first
+        arrays = []
+        for k in keys:
+            col = table.column(k).combine_chunks()
+            if pa.types.is_dictionary(col.type):
+                col = pc.dictionary_decode(col)
+            arrays.append(col)
         return pa.StructArray.from_arrays(arrays, names=list(keys))
     else:
         raise TypeError(f"primary_key must be str or list of str, got {type(keys)}")

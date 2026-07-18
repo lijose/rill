@@ -29,7 +29,9 @@ class TableJoinTask:
         right_keys: Optional[Union[str, List[str]]] = None,
         group_by: Optional[Union[str, List[str]]] = None,
         aggregations: Optional[List[Tuple[str, str]]] = None,
-        primary_key: Optional[Union[str, List[str]]] = None
+        primary_key: Optional[Union[str, List[str]]] = None,
+        incremental: bool = False,
+        retention_policy: Optional['RetentionPolicy'] = None
     ):
         """
         Args:
@@ -43,6 +45,8 @@ class TableJoinTask:
             group_by: Optional column(s) to group by after joining.
             aggregations: Optional list of `(column_name, agg_func)` tuples (e.g. `[("amount", "sum")]`).
             primary_key: Optional primary key for the destination `output_table`.
+            incremental: Whether to perform incremental micro-batch joins on newly appended left_table rows.
+            retention_policy: Optional retention policy for the destination `output_table`.
         """
         self.name = name
         self.left_table = left_table
@@ -54,6 +58,9 @@ class TableJoinTask:
         self.group_by = group_by
         self.aggregations = aggregations
         self.primary_key = primary_key
+        self.incremental = incremental
+        self.retention_policy = retention_policy
+        self._last_processed_rows: int = 0
 
     def execute(self, engine: 'RillEngine') -> Optional[pa.Table]:
         """
@@ -73,8 +80,20 @@ class TableJoinTask:
             return None
 
         try:
+            if self.incremental:
+                if self._last_processed_rows > left_arrow.num_rows:
+                    self._last_processed_rows = 0
+                if self._last_processed_rows == left_arrow.num_rows:
+                    target_tbl = engine.get_table(self.output_table)
+                    return target_tbl.to_arrow() if target_tbl else None
+
+                left_to_join = left_arrow.slice(self._last_processed_rows)
+                self._last_processed_rows = left_arrow.num_rows
+            else:
+                left_to_join = left_arrow
+
             joined = join_tables(
-                left=left_arrow,
+                left=left_to_join,
                 right=right_arrow,
                 keys=self.keys,
                 join_type=self.join_type,
@@ -93,10 +112,15 @@ class TableJoinTask:
             target = engine.get_or_create_table(
                 self.output_table,
                 schema=final_table.schema,
-                primary_key=self.primary_key
+                primary_key=self.primary_key,
+                retention_policy=self.retention_policy or (left_tbl.retention_policy if (self.incremental and not self.aggregations) else None),
+                mode="append" if (self.incremental and not self.aggregations) else None
             )
-            target.replace_state(final_table)
-            return final_table
+            if self.incremental and not self.aggregations:
+                target.upsert(final_table)
+            else:
+                target.replace_state(final_table)
+            return target.to_arrow()
         except Exception as e:
             # Handle schema or join mismatches cleanly during ongoing stream initialization
             return None

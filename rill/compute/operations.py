@@ -32,7 +32,7 @@ def join_tables(
     Returns:
         Joined `pa.Table`.
     """
-    return left.join(
+    joined = left.join(
         right,
         keys=keys,
         right_keys=right_keys,
@@ -41,6 +41,10 @@ def join_tables(
         right_suffix=right_suffix,
         use_threads=True
     )
+    drop_cols = [c for c in joined.column_names if c in ("z_insert_ts_right", "z_update_ts_right")]
+    if drop_cols:
+        joined = joined.drop_columns(drop_cols)
+    return joined
 
 
 def filter_table(

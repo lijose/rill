@@ -113,9 +113,15 @@ class RillTable:
             if isinstance(batch_or_table, list):
                 if not batch_or_table:
                     return self._arrow_table if self._arrow_table is not None else pa.Table.from_batches([], schema=self.schema)
-                batch_or_table = pa.Table.from_batches(batch_or_table, schema=self.schema)
+                try:
+                    batch_or_table = pa.Table.from_batches(batch_or_table, schema=self.schema)
+                except (pa.ArrowInvalid, KeyError, ValueError):
+                    batch_or_table = pa.Table.from_batches(batch_or_table)
             elif isinstance(batch_or_table, pa.RecordBatch):
-                batch_or_table = pa.Table.from_batches([batch_or_table], schema=self.schema)
+                try:
+                    batch_or_table = pa.Table.from_batches([batch_or_table], schema=self.schema)
+                except (pa.ArrowInvalid, KeyError, ValueError):
+                    batch_or_table = pa.Table.from_batches([batch_or_table])
 
             # If our table currently has no schema set, infer from incoming batch
             if self.schema is None:
@@ -151,19 +157,37 @@ class RillTable:
     def apply_retention(self, current_time: Optional[float] = None) -> Optional[pa.Table]:
         """
         Explicitly triggers the retention policy to prune old/excess rows.
+        Also automatically compacts chunked arrays if fragmentation exceeds threshold.
         """
-        if self.retention_policy is None:
-            return self._arrow_table
-
         with self._lock:
-            pruned_table = self.retention_policy.apply(self._arrow_table, current_time=current_time)
-            changed = (pruned_table is not self._arrow_table) and (
-                pruned_table is None or self._arrow_table is None or pruned_table.num_rows != self._arrow_table.num_rows
-            )
-            self._arrow_table = pruned_table
+            if self.retention_policy is not None:
+                pruned_table = self.retention_policy.apply(self._arrow_table, current_time=current_time)
+                changed = (pruned_table is not self._arrow_table) and (
+                    pruned_table is None or self._arrow_table is None or pruned_table.num_rows != self._arrow_table.num_rows
+                )
+                self._arrow_table = pruned_table
+                if changed:
+                    self._notify_subscribers()
 
-        if changed:
-            self._notify_subscribers()
+            if self._arrow_table is not None and self._arrow_table.num_rows > 0 and self._arrow_table.num_columns > 0:
+                if any(self._arrow_table.column(i).num_chunks > 32 for i in range(self._arrow_table.num_columns)):
+                    self._arrow_table = self._arrow_table.combine_chunks(pa.default_memory_pool())
+        return self._arrow_table
+
+    def compact(self, max_chunks: int = 32) -> Optional[pa.Table]:
+        """
+        Compacts the underlying PyArrow Table chunks if any column exceeds `max_chunks`.
+        Returns the compacted table or None if the table is empty/None.
+        """
+        with self._lock:
+            if self._arrow_table is None or self._arrow_table.num_rows == 0 or self._arrow_table.num_columns == 0:
+                return self._arrow_table
+            needs_compact = any(
+                self._arrow_table.column(i).num_chunks > max_chunks
+                for i in range(self._arrow_table.num_columns)
+            )
+            if needs_compact:
+                self._arrow_table = self._arrow_table.combine_chunks(pa.default_memory_pool())
         return self._arrow_table
 
     def replace_state(self, new_table: pa.Table, current_time: Optional[float] = None) -> pa.Table:

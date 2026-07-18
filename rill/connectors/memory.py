@@ -93,7 +93,10 @@ class MemoryConnector(BaseConnector):
                     raise TypeError(f"Unsupported list item type: {type(data[0])}")
             elif isinstance(data, dict):
                 # Dict of columns -> pa.RecordBatch
-                batch = pa.RecordBatch.from_pydict(data, schema=self.schema)
+                try:
+                    batch = pa.RecordBatch.from_pydict(data, schema=self.schema)
+                except (pa.ArrowInvalid, KeyError, ValueError):
+                    batch = pa.RecordBatch.from_pydict(data)
                 self._buffer.append(batch)
             else:
                 raise TypeError(f"Unsupported push data type: {type(data)}")
@@ -110,4 +113,7 @@ class MemoryConnector(BaseConnector):
             batches = list(self._buffer)
             self._buffer.clear()
 
-        return pa.Table.from_batches(batches, schema=self.schema)
+        try:
+            return pa.Table.from_batches(batches, schema=self.schema)
+        except (pa.ArrowInvalid, KeyError, ValueError):
+            return pa.Table.from_batches(batches)

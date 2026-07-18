@@ -27,7 +27,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "pytest-timeout>=2.1.0"
+    "pytest-timeout>=2.1.0",
+    "numpy>=1.24.0"
 ]
 connectors = [
     "websockets>=11.0",

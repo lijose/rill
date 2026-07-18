@@ -35,7 +35,8 @@ class RillEngine:
         memory_budget_mb: Optional[float] = None,
         on_memory_warning: Optional[Callable[[int, int], None]] = None,
         quack_address: Optional[str] = None,
-        quack_token: Optional[str] = None
+        quack_token: Optional[str] = None,
+        auto_compact_chunks: int = 32
     ):
         """
         Args:
@@ -48,8 +49,10 @@ class RillEngine:
             on_memory_warning: Optional callback invoked when allocated memory crosses the budget threshold.
             quack_address: Optional Quack protocol address to serve DuckDB remotely (e.g. 'quack:0.0.0.0:9494').
             quack_token: Optional security token for authentication of remote Quack clients.
+            auto_compact_chunks: Threshold chunk count for automatic de-fragmentation during step (default: 32).
         """
         self.trigger_interval_ms = trigger_interval_ms
+        self.auto_compact_chunks = auto_compact_chunks
         self.tables: Dict[str, RillTable] = {}
         self.connectors: List[BaseConnector] = []
         self.sql_tasks: List[ScheduledSQLTask] = []
@@ -114,6 +117,18 @@ class RillEngine:
             if name not in self.tables:
                 return self.register_table(name, schema=schema, primary_key=primary_key, retention_policy=retention_policy, mode=mode)
             return self.tables[name]
+
+    def compact_all(self, max_chunks: Optional[int] = None) -> None:
+        """
+        Triggers de-fragmentation across all registered Rill tables where chunk count exceeds threshold.
+        """
+        threshold = max_chunks if max_chunks is not None else self.auto_compact_chunks
+        with self._lock:
+            for tbl in self.tables.values():
+                try:
+                    tbl.compact(max_chunks=threshold)
+                except Exception:
+                    pass
 
     def add_connector(self, connector: BaseConnector) -> None:
         """
@@ -245,10 +260,13 @@ class RillEngine:
                 except Exception:
                     pass
 
-            # 4. Enforce optional TTL retention on tables
+            # 4. Enforce optional TTL retention and compaction on tables
+            now_ts = time.time()
             for tbl in self.tables.values():
                 try:
-                    tbl.apply_retention(current_time=t0)
+                    tbl.apply_retention(current_time=now_ts)
+                    if self.auto_compact_chunks > 0:
+                        tbl.compact(max_chunks=self.auto_compact_chunks)
                 except Exception:
                     pass
 

@@ -25,7 +25,8 @@ class ScheduledSQLTask:
         query: str,
         output_table: str,
         interval_seconds: float = 1.0,
-        primary_key: Optional[str] = None
+        primary_key: Optional[str] = None,
+        use_prepared_statements: bool = True
     ):
         """
         Args:
@@ -34,12 +35,14 @@ class ScheduledSQLTask:
             output_table: Name of the `RillTable` where the query output (`pa.Table`) should be stored.
             interval_seconds: Execution frequency in seconds.
             primary_key: Optional primary key for `output_table` if incremental upsert or structured state is required.
+            use_prepared_statements: Whether to pre-compile and reuse a prepared statement plan for this task.
         """
         self.name = name
         self.query = query
         self.output_table = output_table
         self.interval_seconds = interval_seconds
         self.primary_key = primary_key
+        self.use_prepared_statements = use_prepared_statements
         self.last_run_time: float = 0.0
 
     def is_due(self, current_time: float) -> bool:
@@ -55,8 +58,15 @@ class DuckDBBridge:
     Executes ad-hoc queries and runs scheduled SQL transformations.
     """
 
-    def __init__(self, engine: 'RillEngine', connection: Optional[duckdb.DuckDBPyConnection] = None):
+    def __init__(
+        self,
+        engine: 'RillEngine',
+        connection: Optional[duckdb.DuckDBPyConnection] = None,
+        use_prepared_statements: bool = True
+    ):
         self.engine = engine
+        self.use_prepared_statements = use_prepared_statements
+        self._prepared_cache: Dict[str, Any] = {}
         self._lock = threading.RLock()
         if connection is not None:
             self.con = connection
@@ -69,24 +79,21 @@ class DuckDBBridge:
     def register_tables(self) -> None:
         """
         Zero-copy registers all active RillTable PyArrow instances into the DuckDB connection.
-        Also registers/updates the special 'rill_metrics' system/performance metrics table.
+        Also registers/updates the special 'rill_metrics' system/performance metrics view.
         """
         with self._lock:
             for name, rill_table in self.engine.tables.items():
                 arrow_tab = rill_table.to_arrow()
                 if arrow_tab is not None:
                     try:
-                        tmp_name = f"__tmp_{name}"
-                        self.con.register(tmp_name, arrow_tab)
-                        self.con.execute(f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM "{tmp_name}"')
+                        self.con.register(name, arrow_tab)
                     except Exception:
                         pass
             
             # Register/update the dynamic rill_metrics table
             try:
                 metrics_tab = self.engine.metrics.get_metrics_arrow_table(self.engine)
-                self.con.register("__tmp_rill_metrics", metrics_tab)
-                self.con.execute("CREATE OR REPLACE TABLE rill_metrics AS SELECT * FROM __tmp_rill_metrics")
+                self.con.register("rill_metrics", metrics_tab)
             except Exception:
                 pass
 
@@ -102,7 +109,10 @@ class DuckDBBridge:
         """
         with self._lock:
             self.register_tables()
-            return self.con.execute(sql).arrow()
+            res = self.con.execute(sql).arrow()
+            if hasattr(res, "read_all"):
+                res = res.read_all()
+            return res
 
     def run_due_tasks(self, current_time: Optional[float] = None) -> None:
         """
@@ -120,7 +130,23 @@ class DuckDBBridge:
             for task in self.engine.sql_tasks:
                 if task.is_due(current_time):
                     try:
-                        result_table = self.con.execute(task.query).arrow()
+                        prep = None
+                        if self.use_prepared_statements and task.use_prepared_statements:
+                            if task.query not in self._prepared_cache:
+                                try:
+                                    self._prepared_cache[task.query] = self.con.sql(task.query)
+                                except Exception:
+                                    self._prepared_cache[task.query] = None
+                            prep = self._prepared_cache.get(task.query)
+
+                        if prep is not None:
+                            res = prep.arrow()
+                        else:
+                            res = self.con.execute(task.query).arrow()
+
+                        if hasattr(res, "read_all"):
+                            res = res.read_all()
+                        result_table = res
                         # Get or create destination RillTable
                         target_table = self.engine.get_or_create_table(
                             task.output_table,
@@ -132,3 +158,4 @@ class DuckDBBridge:
                     except Exception as e:
                         # Log error without stopping engine loop
                         pass
+

@@ -5,7 +5,10 @@ runs scheduled DuckDB SQL transformations, tracks real-time system performance, 
 """
 
 import time
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pyarrow as pa
 from rill import (
     RillEngine,

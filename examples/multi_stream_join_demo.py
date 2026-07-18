@@ -5,7 +5,10 @@ in C++ memory (`TableJoinTask`), applies time/row retention, and checkpoints sna
 """
 
 import time
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pyarrow as pa
 from rill import (
     RillEngine,
