@@ -7,10 +7,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="logo.png">
     <link rel="stylesheet" href="index.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
+    <!-- Floating Alert Toast Container -->
+    <div id="alert-toast-container" class="alert-toast-container"></div>
+
     <div class="app-container">
         <!-- Header -->
         <header class="app-header">
@@ -54,137 +58,333 @@
             </section>
 
             <!-- Dashboard Grid (hidden until connected) -->
-            <!-- Dashboard Grid (hidden until connected) -->
             <div class="dashboard-grid hidden" id="dashboard-content">
-                <!-- Control Bar & Global Time Filter -->
+                <!-- Main View Navigation Bar -->
+                <div class="dashboard-nav-tabs">
+                    <button class="nav-tab-btn active" id="tab-btn-metrics" data-view="metrics">
+                        <span>📊</span> Metrics Console
+                    </button>
+                    <button class="nav-tab-btn" id="tab-btn-alert-settings" data-view="alert-settings">
+                        <span>⚙️</span> Alert Rules & Settings
+                    </button>
+                    <button class="nav-tab-btn" id="tab-btn-alert-logs" data-view="alert-logs">
+                        <span>🔔</span> Alert Logs <span class="badge" id="alert-badge-count">0</span>
+                    </button>
+                </div>
+
+                <!-- Global Control Bar & Connection Header -->
                 <div class="control-panel card">
                     <div class="connected-info">
                         <span class="connected-addr">Serving connection: <strong id="current-connected-addr">-</strong></span>
                     </div>
                     <div class="history-controls">
-                        <label for="history-filter">Time Range:</label>
-                        <select id="history-filter" class="select-control">
-                            <option value="30">Last 30 seconds</option>
-                            <option value="60">Last 60 seconds</option>
-                            <option value="90" selected>Last 90 seconds</option>
-                            <option value="100">Last 100 seconds</option>
-                            <option value="180">Last 180 seconds</option>
-                            <option value="300">Last 300 seconds</option>
-                            <option value="all">All stored</option>
-                        </select>
-                        <button id="disconnect-btn" class="btn btn-secondary">Disconnect</button>
+                        <div id="metrics-time-controls" class="time-filter-group">
+                            <label for="history-filter">Time Range:</label>
+                            <select id="history-filter" class="select-control">
+                                <option value="30">Last 30 seconds</option>
+                                <option value="60">Last 60 seconds</option>
+                                <option value="90" selected>Last 90 seconds</option>
+                                <option value="100">Last 100 seconds</option>
+                                <option value="180">Last 180 seconds</option>
+                                <option value="300">Last 300 seconds</option>
+                                <option value="all">All stored</option>
+                            </select>
+                        </div>
+                        <button id="disconnect-btn" class="btn btn-secondary">Disconnect Server</button>
                     </div>
                 </div>
 
-                <!-- SECTION 1: BUSINESS METRICS CENTERPIECE -->
-                <div class="section-container business-spotlight">
-                    <div class="section-title-bar">
-                        <h2>💎 Key Business Intelligence & Formulas</h2>
-                        <span class="section-tag">Live PyArrow Evaluated</span>
-                    </div>
+                <!-- VIEW 1: METRICS CONSOLE -->
+                <div id="view-metrics" class="view-panel">
+                    <!-- SECTION 1: BUSINESS METRICS CENTERPIECE -->
+                    <div class="section-container business-spotlight">
+                        <div class="section-title-bar">
+                            <h2>💎 Key Business Intelligence & Formulas</h2>
+                            <span class="section-tag">Live PyArrow Evaluated</span>
+                        </div>
 
-                    <!-- Dynamic Business Cards Grid -->
-                    <div class="biz-cards-grid" id="business-cards-grid">
-                        <p class="no-data">Waiting for business metrics...</p>
-                    </div>
+                        <!-- Dynamic Business Cards Grid -->
+                        <div class="biz-cards-grid" id="business-cards-grid">
+                            <p class="no-data">Waiting for business metrics...</p>
+                        </div>
 
-                    <!-- Business Charts Row: Trend Line Chart & Histogram -->
-                    <div class="biz-charts-grid">
-                        <div class="card chart-card">
-                            <div class="chart-header">
-                                <h2>📈 Business Metrics Trend (Line Plot)</h2>
+                        <!-- Business Charts Row: Trend Line Chart & Histogram -->
+                        <div class="biz-charts-grid">
+                            <div class="card chart-card">
+                                <div class="chart-header">
+                                    <h2>📈 Business Metrics Trend (Line Plot)</h2>
+                                </div>
+                                <div class="chart-container">
+                                    <canvas id="business-trend-chart"></canvas>
+                                </div>
                             </div>
-                            <div class="chart-container">
-                                <canvas id="business-trend-chart"></canvas>
+                            <div class="card chart-card">
+                                <div class="chart-header">
+                                    <h2>📊 Business Metrics Distribution (Histogram)</h2>
+                                </div>
+                                <div class="chart-container">
+                                    <canvas id="business-hist-chart"></canvas>
+                                </div>
                             </div>
                         </div>
-                        <div class="card chart-card">
+                    </div>
+
+                    <!-- SECTION 2: SYSTEM & ENGINE INFRASTRUCTURE -->
+                    <div class="section-container system-spotlight">
+                        <div class="section-title-bar">
+                            <h2>⚙️ Engine Infrastructure & Resource Utilization</h2>
+                            <span class="section-tag system-tag">Host & Process</span>
+                        </div>
+
+                        <!-- Stats Counters Grid -->
+                        <div class="metrics-grid">
+                            <!-- CPU CARD -->
+                            <div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">CPU Utilization</span>
+                                    <span class="metric-icon">💻</span>
+                                </div>
+                                <div class="metric-value" id="val-cpu">0.0%</div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="bar-cpu" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- System Memory CARD -->
+                            <div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">System Memory</span>
+                                    <span class="metric-icon">💾</span>
+                                </div>
+                                <div class="metric-value" id="val-mem">0.0 GB / 0.0 GB</div>
+                                <div class="metric-subtext" id="sub-mem-pct">0% used</div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" id="bar-mem" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- PyArrow Memory CARD -->
+                            <div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">PyArrow Allocated Memory</span>
+                                    <span class="metric-icon">🏹</span>
+                                </div>
+                                <div class="metric-value" id="val-pyarrow">0.00 MB</div>
+                                <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
+                            </div>
+
+                            <!-- Throughput CARD -->
+                            <div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">Throughput (RPS)</span>
+                                    <span class="metric-icon">🚀</span>
+                                </div>
+                                <div class="metric-value" id="val-rps">0.00 /s</div>
+                                <div class="metric-subtext" id="val-total-records">Total: 0 processed</div>
+                            </div>
+
+                            <!-- Batch Latency CARD -->
+                            <div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">Last Batch Latency</span>
+                                    <span class="metric-icon">⚡</span>
+                                </div>
+                                <div class="metric-value" id="val-latency">0.00 ms</div>
+                                <div class="metric-subtext" id="val-avg-latency">Avg: 0.00 ms</div>
+                            </div>
+                        </div>
+
+                        <!-- System Resource History Chart -->
+                        <div class="chart-section card">
                             <div class="chart-header">
-                                <h2>📊 Business Metrics Distribution (Histogram)</h2>
+                                <h2>📊 System Resource History</h2>
+                                <div class="chart-legend">
+                                    <span class="legend-item"><span class="legend-color cpu-color"></span> CPU</span>
+                                    <span class="legend-item"><span class="legend-color mem-color"></span> Memory</span>
+                                </div>
                             </div>
                             <div class="chart-container">
-                                <canvas id="business-hist-chart"></canvas>
+                                <canvas id="resource-chart"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- SECTION 2: SYSTEM & ENGINE INFRASTRUCTURE -->
-                <div class="section-container system-spotlight">
-                    <div class="section-title-bar">
-                        <h2>⚙️ Engine Infrastructure & Resource Utilization</h2>
-                        <span class="section-tag system-tag">Host & Process</span>
+                <!-- VIEW 2: ALERT RULES & SETTINGS -->
+                <div id="view-alert-settings" class="view-panel hidden">
+                    <div class="settings-grid">
+                        <!-- Sound Configuration Card -->
+                        <div class="card settings-card">
+                            <div class="settings-card-header">
+                                <h2>🔊 Sound Alert Configuration</h2>
+                                <label class="toggle-switch-wrapper">
+                                    <input type="checkbox" id="alert-sound-enable-toggle" checked>
+                                    <span class="toggle-slider"></span>
+                                    <span class="toggle-label">Sound Enabled</span>
+                                </label>
+                            </div>
+                            <p class="settings-description">Configure the acoustic alarm generated using the browser's Web Audio API whenever a trigger condition is met.</p>
+                            
+                            <div class="settings-form-row">
+                                <div class="input-group">
+                                    <label for="alert-duration-input">Sound Duration (Seconds)</label>
+                                    <div class="slider-input-wrapper">
+                                        <input type="range" id="alert-duration-slider" min="1" max="30" value="3" class="range-slider">
+                                        <input type="number" id="alert-duration-input" min="1" max="60" value="3" class="number-input">
+                                        <span class="unit-text">sec</span>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label for="alert-tone-select">Alert Sound Tone</label>
+                                    <select id="alert-tone-select" class="select-control full-width">
+                                        <option value="beep">Classic Beep (Pulse)</option>
+                                        <option value="siren">Warning Siren (Oscillating)</option>
+                                        <option value="chime">Gentle Chime (Bell)</option>
+                                        <option value="buzzer">Urgent Buzzer (Square Wave)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="settings-actions">
+                                <button id="test-sound-btn" class="btn btn-primary">🔊 Test Alert Sound</button>
+                            </div>
+                        </div>
+
+                        <!-- Webhook Notifications Card -->
+                        <div class="card settings-card">
+                            <div class="settings-card-header">
+                                <h2>🔗 Webhook Notifications</h2>
+                                <label class="toggle-switch-wrapper">
+                                    <input type="checkbox" id="webhook-enable-toggle">
+                                    <span class="toggle-slider"></span>
+                                    <span class="toggle-label">Webhook Enabled</span>
+                                </label>
+                            </div>
+                            <p class="settings-description">Send real-time alerts to Slack, Google Meet/Chat, or custom POST endpoints via the CORS relay proxy when triggers fire.</p>
+                            
+                            <div class="settings-form-row">
+                                <div class="input-group full-width">
+                                    <label for="webhook-url-input">Webhook Endpoint URL</label>
+                                    <input type="url" id="webhook-url-input" placeholder="e.g. https://hooks.slack.com/services/... or https://chat.googleapis.com/..." class="text-input">
+                                </div>
+                            </div>
+                            <div class="settings-form-row">
+                                <div class="input-group full-width">
+                                    <label for="webhook-format-select">Payload Format Template</label>
+                                    <select id="webhook-format-select" class="select-control full-width">
+                                        <option value="slack">Slack Incoming Webhook (Markdown Text)</option>
+                                        <option value="google_chat">Google Chat / Google Meet Webhook</option>
+                                        <option value="custom">Custom Structured JSON Payload</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="settings-actions">
+                                <button id="test-webhook-btn" class="btn btn-secondary">🔗 Test Webhook Delivery</button>
+                                <span id="webhook-test-status" class="status-message"></span>
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- Stats Counters Grid -->
-                    <div class="metrics-grid">
-                        <!-- CPU CARD -->
-                        <div class="card metric-card">
-                            <div class="metric-header">
-                                <span class="metric-title">CPU Utilization</span>
-                                <span class="metric-icon">💻</span>
-                            </div>
-                            <div class="metric-value" id="val-cpu">0.0%</div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar" id="bar-cpu" style="width: 0%"></div>
-                            </div>
+                    <!-- Trigger Rules Management Card -->
+                    <div class="card rules-management-card">
+                        <div class="section-title-bar">
+                            <h2>⚡ Configured Alert Trigger Rules</h2>
+                            <span class="section-tag">Live Evaluated</span>
                         </div>
+                        <p class="settings-description">Create custom conditions based on live engine metrics (`CPU`, `Memory`, `Throughput`) or custom PyArrow `Business Metrics`. When evaluated true, the configured alert tone and webhook will fire.</p>
 
-                        <!-- System Memory CARD -->
-                        <div class="card metric-card">
-                            <div class="metric-header">
-                                <span class="metric-title">System Memory</span>
-                                <span class="metric-icon">💾</span>
+                        <!-- Add Rule Form -->
+                        <form id="add-rule-form" class="add-rule-form">
+                            <div class="rule-form-grid">
+                                <div class="input-group">
+                                    <label for="rule-metric-select">Metric / Field</label>
+                                    <select id="rule-metric-select" class="select-control full-width" required>
+                                        <optgroup label="System Metrics">
+                                            <option value="cpu">CPU Utilization (%)</option>
+                                            <option value="memPct">System Memory Used (%)</option>
+                                            <option value="rps">Throughput (Records/sec)</option>
+                                            <option value="latency">Last Batch Latency (ms)</option>
+                                        </optgroup>
+                                        <optgroup label="Business Metrics" id="rule-biz-optgroup">
+                                            <!-- Dynamic business metrics populated here -->
+                                        </optgroup>
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label for="rule-operator-select">Condition</label>
+                                    <select id="rule-operator-select" class="select-control full-width" required>
+                                        <option value=">">Greater than (>)</option>
+                                        <option value=">=">Greater than or equal (>=)</option>
+                                        <option value="<">Less than (<)</option>
+                                        <option value="<=">Less than or equal (<=)</option>
+                                        <option value="==">Equals (==)</option>
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label for="rule-threshold-input">Threshold Value</label>
+                                    <input type="number" id="rule-threshold-input" step="any" placeholder="e.g. 85" required class="text-input">
+                                </div>
+                                <div class="input-group">
+                                    <label for="rule-cooldown-input">Cooldown (Seconds)</label>
+                                    <input type="number" id="rule-cooldown-input" min="0" value="10" title="Minimum wait time before triggering this rule again" required class="text-input">
+                                </div>
+                                <div class="input-group form-submit-col">
+                                    <label>&nbsp;</label>
+                                    <button type="submit" class="btn btn-primary full-width">+ Add Rule</button>
+                                </div>
                             </div>
-                            <div class="metric-value" id="val-mem">0.0 GB / 0.0 GB</div>
-                            <div class="metric-subtext" id="sub-mem-pct">0% used</div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar" id="bar-mem" style="width: 0%"></div>
-                            </div>
-                        </div>
+                        </form>
 
-                        <!-- PyArrow Memory CARD -->
-                        <div class="card metric-card">
-                            <div class="metric-header">
-                                <span class="metric-title">PyArrow Allocated Memory</span>
-                                <span class="metric-icon">🏹</span>
-                            </div>
-                            <div class="metric-value" id="val-pyarrow">0.00 MB</div>
-                            <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
-                        </div>
-
-                        <!-- Throughput CARD -->
-                        <div class="card metric-card">
-                            <div class="metric-header">
-                                <span class="metric-title">Throughput (RPS)</span>
-                                <span class="metric-icon">🚀</span>
-                            </div>
-                            <div class="metric-value" id="val-rps">0.00 /s</div>
-                            <div class="metric-subtext" id="val-total-records">Total: 0 processed</div>
-                        </div>
-
-                        <!-- Batch Latency CARD -->
-                        <div class="card metric-card">
-                            <div class="metric-header">
-                                <span class="metric-title">Last Batch Latency</span>
-                                <span class="metric-icon">⚡</span>
-                            </div>
-                            <div class="metric-value" id="val-latency">0.00 ms</div>
-                            <div class="metric-subtext" id="val-avg-latency">Avg: 0.00 ms</div>
+                        <!-- Rules Table -->
+                        <div class="table-container rules-table-container">
+                            <table class="history-table" id="alert-rules-table">
+                                <thead>
+                                    <tr>
+                                        <th>Enabled</th>
+                                        <th>Metric / Field</th>
+                                        <th>Condition</th>
+                                        <th>Cooldown</th>
+                                        <th>Last Triggered</th>
+                                        <th style="text-align: right;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="alert-rules-tbody">
+                                    <!-- Rules rendered here -->
+                                </tbody>
+                            </table>
                         </div>
                     </div>
+                </div>
 
-                    <!-- System Resource History Chart -->
-                    <div class="chart-section card">
-                        <div class="chart-header">
-                            <h2>📊 System Resource History</h2>
-                            <div class="chart-legend">
-                                <span class="legend-item"><span class="legend-color cpu-color"></span> CPU</span>
-                                <span class="legend-item"><span class="legend-color mem-color"></span> Memory</span>
+                <!-- VIEW 3: ALERT LOGS -->
+                <div id="view-alert-logs" class="view-panel hidden">
+                    <div class="card logs-card">
+                        <div class="history-header">
+                            <div>
+                                <h2>🔔 Triggered Alert History & Logs</h2>
+                                <p class="settings-description">Chronological log of every trigger event across all active tabs with audio/webhook notification status.</p>
+                            </div>
+                            <div class="history-controls">
+                                <button id="clear-alert-logs-btn" class="btn btn-secondary">Clear Logs</button>
                             </div>
                         </div>
-                        <div class="chart-container">
-                            <canvas id="resource-chart"></canvas>
+
+                        <div class="table-container">
+                            <table class="history-table" id="alert-logs-table">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Rule / Condition</th>
+                                        <th>Observed Value vs Threshold</th>
+                                        <th>Server Tab</th>
+                                        <th>Notification Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="alert-logs-tbody">
+                                    <tr class="empty-table-row">
+                                        <td colspan="5" class="empty-table">No alerts triggered yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>

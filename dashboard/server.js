@@ -23,7 +23,42 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.post('/api/webhook/send', async (req, res) => {
+    try {
+        const { url, format, payload } = req.body;
+        if (!url) {
+            return res.status(400).json({ success: false, error: 'Webhook URL is required' });
+        }
+
+        let bodyData = payload;
+        if (format === 'slack' || format === 'google_chat') {
+            const timeStr = payload.timestamp ? new Date(payload.timestamp * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+            const textMsg = `🚨 *[Rill Alert Triggered]*\n*Rule*: ${payload.ruleName || 'Custom Rule'}\n*Condition*: ${payload.metricField} ${payload.operator} ${payload.threshold}\n*Observed Value*: ${payload.observedValue}\n*Server*: ${payload.serverAddress || 'Unknown'}\n*Time*: ${timeStr}`;
+            bodyData = { text: textMsg };
+        }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(bodyData)
+        });
+
+        if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            return res.status(response.status).json({ success: false, error: `Remote returned status ${response.status}: ${errText.slice(0, 100)}` });
+        }
+
+        res.json({ success: true, status: response.status });
+    } catch (err) {
+        console.error('[Webhook Proxy Error]:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

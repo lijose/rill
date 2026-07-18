@@ -109,11 +109,14 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 ```
 
 ### Dashboard Highlights:
-- **💎 Business Intelligence Centerpiece**: Prominently displays custom KPIs (`max_order_amount`, `total_revenue`, `cancelled_ratio`) right at the top.
-- **Interactive Business Charts**: Includes a real-time **Line Chart** plotting numerical KPI trends over time, alongside a **Histogram / Bar Chart** comparing snapshot distributions across formulas.
+- **📊 Multi-View Glassmorphic Navigation**: Seamlessly switch between the **Metrics Console**, **Alert Rules & Settings**, and **Alert Logs** right from the top bar.
+- **💎 Business Intelligence Centerpiece**: Prominently displays custom KPIs (`max_order_amount`, `total_revenue`, `cancelled_ratio`) and evaluates live PyArrow formulas on every tick.
+- **Interactive Business & System Charts**: Includes a real-time **Line Chart** plotting numerical KPI trends over time, alongside a **Histogram / Bar Chart** comparing snapshot distributions across formulas.
 - **⚙️ Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, throughput (RPS), and step latency into a dedicated secondary monitoring section.
-- **Multi-Tab Connections**: Connect to and switch between multiple remote or local Rill/Quack instances (`quack:ip:port`) inside a single UI.
-- **Dynamic Time Range Control**: Filter live charts across flexible historical intervals (`Last 30s`, `Last 60s`, `Last 90s`, `Last 180s`, `Last 300s`, or `All stored`).
+- **🔊 Browser-Native Sound Alerts**: Real-time Web Audio API acoustic engine with selectable tones (`Classic Beep`, `Warning Siren`, `Gentle Chime`, `Urgent Buzzer`), customizable duration sliders (1s–30s), and instant sound preview.
+- **⚪ Offline / Disconnected Grey Tabs**: Multi-tab connection bar with automatic health tracking. If a remote Quack server drops connection or exits, its tab instantly turns grey with a grey status dot and hover failure details.
+- **🔗 Server-Side Webhook Relay (`POST /api/webhook/send`)**: Bypasses browser CORS restrictions by routing real-time alert notifications directly to **Slack Incoming Webhooks**, **Google Chat / Google Meet Cards**, or **Custom JSON endpoints**.
+- **🔔 Real-Time Alert Evaluation & History Logs**: Evaluates custom trigger rules (`>`, `>=`, `<`, `<=`, `==`) with cooldown protection and logs every fired event (`#view-alert-logs`) with audio/webhook status badges. All rules and settings persist automatically in `localStorage`.
 
 ---
 
