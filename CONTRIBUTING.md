@@ -6,7 +6,7 @@ First off, thank you for considering contributing to **Rill**! We welcome bug re
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/rill.git
+   git clone https://github.com/lijose/rill.git
    cd rill
    ```
 

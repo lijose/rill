@@ -22,12 +22,14 @@ def main():
     print("🚀 Initializing Rill Engine with Multi-Stream Joins & Checkpointing...")
     print("=" * 75)
 
-    checkpoint_dir = Path("/tmp/rill_multi_stream_checkpoints")
-    engine = RillEngine(
-        trigger_interval_ms=200.0,
-        checkpoint_dir=checkpoint_dir,
-        checkpoint_interval_seconds=2.0
-    )
+    # checkpoint_dir = Path("/tmp/rill_multi_stream_checkpoints")
+    # engine = RillEngine(
+    #     trigger_interval_ms=200.0,
+    #     checkpoint_dir=checkpoint_dir,
+    #     checkpoint_interval_seconds=2.0
+    # )
+    # will add later
+    engine = RillEngine(trigger_interval_ms=200.0)
     output_api = OutputAPI(engine)
 
     # 1. Register Stream A: 'user_profiles' (with primary_key='user_id')
@@ -153,9 +155,10 @@ def main():
                 print(f"  Region: {r['region']:<15} | Tier: {r['tier']:<8} | Orders: {r['order_cnt']} | Total: ${r['total_revenue']:.2f}")
 
         # Checkpoint persistence check
-        time.sleep(1.5)  # Allow checkpointer (2.0s interval) to save snapshots
-        saved_files = list(checkpoint_dir.glob("*.parquet"))
-        print(f"\n💾 Checkpointer persisted snapshots to disk: {[f.name for f in saved_files]}")
+        # time.sleep(1.5)  # Allow checkpointer (2.0s interval) to save snapshots
+        # saved_files = list(checkpoint_dir.glob("*.parquet"))
+        # print(f"\n💾 Checkpointer persisted snapshots to disk: {[f.name for f in saved_files]}")
+        # will add later
 
     finally:
         engine.stop()

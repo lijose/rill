@@ -196,5 +196,33 @@ class RillTable:
         with self._lock:
             return self._arrow_table.num_columns if self._arrow_table is not None else 0
 
+    def estimate_row_size(self, avg_string_length: int = 32, avg_list_length: int = 5) -> Optional[float]:
+        """
+        Estimates the average memory size of a single row in this table (in bytes) based on its schema.
+        Returns None if schema is not set.
+        """
+        with self._lock:
+            if self.schema is None:
+                return None
+            from .schema import estimate_schema_row_size
+            return estimate_schema_row_size(self.schema, avg_string_length=avg_string_length, avg_list_length=avg_list_length)
+
+    def estimate_records_capacity(
+        self,
+        memory_budget_bytes: int,
+        safety_factor: float = 0.75,
+        avg_string_length: int = 32,
+        avg_list_length: int = 5
+    ) -> Optional[int]:
+        """
+        Estimates how many records will fit within a given memory budget (in bytes) for this table,
+        applying a safety factor to account for alignment and overhead.
+        Returns None if schema is not set.
+        """
+        row_size = self.estimate_row_size(avg_string_length=avg_string_length, avg_list_length=avg_list_length)
+        if row_size is None or row_size <= 0:
+            return None
+        return int((memory_budget_bytes * safety_factor) / row_size)
+
     def __repr__(self) -> str:
         return f"<RillTable(name='{self.name}', mode='{self.mode}', num_rows={self.num_rows}, num_columns={self.num_columns}, primary_key={self.primary_key})>"

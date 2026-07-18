@@ -5,9 +5,72 @@ System performance tracking and live business logic evaluation metrics for Rill 
 import time
 import threading
 from typing import Dict, Any, Callable, Optional, TYPE_CHECKING
+import json
+import pyarrow as pa
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 if TYPE_CHECKING:
     from .engine import RillEngine
+
+
+if psutil is not None:
+    try:
+        psutil.cpu_percent()
+    except Exception:
+        pass
+
+
+def get_system_cpu_usage() -> float:
+    if psutil is not None:
+        try:
+            val = psutil.cpu_percent()
+            if val > 0:
+                return val
+        except Exception:
+            pass
+    # Fallback using /proc/stat
+    try:
+        with open('/proc/stat', 'r') as f:
+            lines = f.readlines()
+        for line in lines:
+            if line.startswith('cpu '):
+                parts = [float(x) for x in line.split()[1:]]
+                idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+                total = sum(parts)
+                return round(100.0 * (1.0 - idle / total), 1) if total > 0 else 0.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def get_system_memory() -> tuple[int, int]:
+    if psutil is not None:
+        try:
+            mem = psutil.virtual_memory()
+            if mem.total > 0:
+                return mem.total, mem.used
+        except Exception:
+            pass
+    # Fallback using /proc/meminfo
+    try:
+        info = {}
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                parts = line.split(':')
+                if len(parts) == 2:
+                    info[parts[0].strip()] = int(parts[1].split()[0]) * 1024
+        total = info.get('MemTotal', 0)
+        available = info.get('MemAvailable', info.get('MemFree', 0))
+        used = total - available if total > available else 0
+        return total, used
+    except Exception:
+        pass
+    return 0, 0
+
 
 
 class MetricsRegistry:
@@ -125,3 +188,48 @@ class MetricsRegistry:
         with self._lock:
             metrics["business_metrics"] = dict(self.business_metrics)
         return metrics
+
+    def get_metrics_arrow_table(self, engine: 'RillEngine') -> pa.Table:
+        """
+        Constructs a single-row PyArrow Table of the current system, engine, and PyArrow memory metrics.
+        """
+        cpu_usage = get_system_cpu_usage()
+        total_mem, used_mem = get_system_memory()
+        
+        pyarrow_allocated = pa.total_allocated_bytes()
+        pyarrow_max = pa.default_memory_pool().max_memory()
+        
+        all_metrics = self.get_all_metrics(engine)
+        business_metrics_json = json.dumps(all_metrics.get("business_metrics", {}))
+        
+        data = {
+            "timestamp": [time.time()],
+            "cpu_usage": [cpu_usage],
+            "total_memory": [total_mem],
+            "used_memory": [used_mem],
+            "pyarrow_allocated_bytes": [pyarrow_allocated],
+            "pyarrow_max_memory": [pyarrow_max],
+            "last_batch_records": [all_metrics.get("last_batch_records", 0)],
+            "total_records_processed": [all_metrics.get("total_records_processed", 0)],
+            "last_batch_latency_ms": [all_metrics.get("last_batch_latency_ms", 0.0)],
+            "avg_batch_latency_ms": [all_metrics.get("avg_batch_latency_ms", 0.0)],
+            "records_per_second": [all_metrics.get("records_per_second", 0.0)],
+            "business_metrics": [business_metrics_json],
+        }
+        
+        schema = pa.schema([
+            ("timestamp", pa.float64()),
+            ("cpu_usage", pa.float64()),
+            ("total_memory", pa.int64()),
+            ("used_memory", pa.int64()),
+            ("pyarrow_allocated_bytes", pa.int64()),
+            ("pyarrow_max_memory", pa.int64()),
+            ("last_batch_records", pa.int64()),
+            ("total_records_processed", pa.int64()),
+            ("last_batch_latency_ms", pa.float64()),
+            ("avg_batch_latency_ms", pa.float64()),
+            ("records_per_second", pa.float64()),
+            ("business_metrics", pa.string()),
+        ])
+        
+        return pa.Table.from_pydict(data, schema=schema)

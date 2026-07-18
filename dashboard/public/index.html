@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rill Streaming Engine Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="logo-icon">🌀</span>
+                <h1>Rill <span>Metrics Console</span></h1>
+            </div>
+            
+            <div class="connection-status" id="connection-status-pill">
+                <span class="status-dot"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Tabs Container -->
+        <div class="tabs-container hidden" id="tabs-container">
+            <div class="tabs-bar" id="tabs-bar">
+                <!-- Tabs will be rendered here dynamically -->
+            </div>
+            <button class="tab-add-btn" id="tab-add-btn" title="Add another connection">+</button>
+        </div>
+
+        <!-- Main Body -->
+        <main class="app-main">
+            <!-- Connection Card -->
+            <section class="card connection-card" id="connection-panel">
+                <h2>🔌 Connect to Rill Quack Server</h2>
+                <p class="subtitle">Enter the DuckDB Quack remote address and token to fetch streaming engine statistics.</p>
+                <form id="connect-form" class="connect-form">
+                    <div class="input-group">
+                        <label for="quack-address">Quack Server Address</label>
+                        <input type="text" id="quack-address" placeholder="e.g. quack:127.0.0.1:9494" required value="quack:127.0.0.1:9494">
+                    </div>
+                    <div class="input-group">
+                        <label for="quack-token">Security Token (Optional)</label>
+                        <input type="password" id="quack-token" placeholder="Enter authentication token if set">
+                    </div>
+                    <button type="submit" id="connect-btn" class="btn btn-primary">Connect Console</button>
+                </form>
+                <div class="error-msg" id="connect-error"></div>
+            </section>
+
+            <!-- Dashboard Grid (hidden until connected) -->
+            <!-- Dashboard Grid (hidden until connected) -->
+            <div class="dashboard-grid hidden" id="dashboard-content">
+                <!-- Control Bar & Global Time Filter -->
+                <div class="control-panel card">
+                    <div class="connected-info">
+                        <span class="connected-addr">Serving connection: <strong id="current-connected-addr">-</strong></span>
+                    </div>
+                    <div class="history-controls">
+                        <label for="history-filter">Time Range:</label>
+                        <select id="history-filter" class="select-control">
+                            <option value="30">Last 30 seconds</option>
+                            <option value="60">Last 60 seconds</option>
+                            <option value="90" selected>Last 90 seconds</option>
+                            <option value="100">Last 100 seconds</option>
+                            <option value="180">Last 180 seconds</option>
+                            <option value="300">Last 300 seconds</option>
+                            <option value="all">All stored</option>
+                        </select>
+                        <button id="disconnect-btn" class="btn btn-secondary">Disconnect</button>
+                    </div>
+                </div>
+
+                <!-- SECTION 1: BUSINESS METRICS CENTERPIECE -->
+                <div class="section-container business-spotlight">
+                    <div class="section-title-bar">
+                        <h2>💎 Key Business Intelligence & Formulas</h2>
+                        <span class="section-tag">Live PyArrow Evaluated</span>
+                    </div>
+
+                    <!-- Dynamic Business Cards Grid -->
+                    <div class="biz-cards-grid" id="business-cards-grid">
+                        <p class="no-data">Waiting for business metrics...</p>
+                    </div>
+
+                    <!-- Business Charts Row: Trend Line Chart & Histogram -->
+                    <div class="biz-charts-grid">
+                        <div class="card chart-card">
+                            <div class="chart-header">
+                                <h2>📈 Business Metrics Trend (Line Plot)</h2>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="business-trend-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="card chart-card">
+                            <div class="chart-header">
+                                <h2>📊 Business Metrics Distribution (Histogram)</h2>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="business-hist-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECTION 2: SYSTEM & ENGINE INFRASTRUCTURE -->
+                <div class="section-container system-spotlight">
+                    <div class="section-title-bar">
+                        <h2>⚙️ Engine Infrastructure & Resource Utilization</h2>
+                        <span class="section-tag system-tag">Host & Process</span>
+                    </div>
+
+                    <!-- Stats Counters Grid -->
+                    <div class="metrics-grid">
+                        <!-- CPU CARD -->
+                        <div class="card metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">CPU Utilization</span>
+                                <span class="metric-icon">💻</span>
+                            </div>
+                            <div class="metric-value" id="val-cpu">0.0%</div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar" id="bar-cpu" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <!-- System Memory CARD -->
+                        <div class="card metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">System Memory</span>
+                                <span class="metric-icon">💾</span>
+                            </div>
+                            <div class="metric-value" id="val-mem">0.0 GB / 0.0 GB</div>
+                            <div class="metric-subtext" id="sub-mem-pct">0% used</div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar" id="bar-mem" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <!-- PyArrow Memory CARD -->
+                        <div class="card metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">PyArrow Allocated Memory</span>
+                                <span class="metric-icon">🏹</span>
+                            </div>
+                            <div class="metric-value" id="val-pyarrow">0.00 MB</div>
+                            <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
+                        </div>
+
+                        <!-- Throughput CARD -->
+                        <div class="card metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Throughput (RPS)</span>
+                                <span class="metric-icon">🚀</span>
+                            </div>
+                            <div class="metric-value" id="val-rps">0.00 /s</div>
+                            <div class="metric-subtext" id="val-total-records">Total: 0 processed</div>
+                        </div>
+
+                        <!-- Batch Latency CARD -->
+                        <div class="card metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Last Batch Latency</span>
+                                <span class="metric-icon">⚡</span>
+                            </div>
+                            <div class="metric-value" id="val-latency">0.00 ms</div>
+                            <div class="metric-subtext" id="val-avg-latency">Avg: 0.00 ms</div>
+                        </div>
+                    </div>
+
+                    <!-- System Resource History Chart -->
+                    <div class="chart-section card">
+                        <div class="chart-header">
+                            <h2>📊 System Resource History</h2>
+                            <div class="chart-legend">
+                                <span class="legend-item"><span class="legend-color cpu-color"></span> CPU</span>
+                                <span class="legend-item"><span class="legend-color mem-color"></span> Memory</span>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="resource-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

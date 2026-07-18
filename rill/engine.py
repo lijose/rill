@@ -11,7 +11,7 @@ from .table import RillTable
 from .connectors.base import BaseConnector
 from .compute.sql import ScheduledSQLTask, DuckDBBridge
 from .metrics import MetricsRegistry
-from .checkpoint import Checkpointer
+# from .checkpoint import Checkpointer  # will add later
 if TYPE_CHECKING:
     from .retention import RetentionPolicy
     from .compute.join import TableJoinTask
@@ -33,7 +33,9 @@ class RillEngine:
         checkpoint_interval_seconds: float = 60.0,
         memory_budget_bytes: Optional[int] = None,
         memory_budget_mb: Optional[float] = None,
-        on_memory_warning: Optional[Callable[[int, int], None]] = None
+        on_memory_warning: Optional[Callable[[int, int], None]] = None,
+        quack_address: Optional[str] = None,
+        quack_token: Optional[str] = None
     ):
         """
         Args:
@@ -44,6 +46,8 @@ class RillEngine:
             memory_budget_bytes: Maximum memory threshold in bytes before emitting warning messages.
             memory_budget_mb: Maximum memory threshold in megabytes (convenience wrapper for `memory_budget_bytes`).
             on_memory_warning: Optional callback invoked when allocated memory crosses the budget threshold.
+            quack_address: Optional Quack protocol address to serve DuckDB remotely (e.g. 'quack:0.0.0.0:9494').
+            quack_token: Optional security token for authentication of remote Quack clients.
         """
         self.trigger_interval_ms = trigger_interval_ms
         self.tables: Dict[str, RillTable] = {}
@@ -52,15 +56,21 @@ class RillEngine:
         self.join_tasks: List['TableJoinTask'] = []
         self.metrics = MetricsRegistry()
         self.duckdb = DuckDBBridge(self, connection=duckdb_connection)
-        self.checkpointer: Optional[Checkpointer] = (
-            Checkpointer(checkpoint_dir, interval_seconds=checkpoint_interval_seconds)
-            if checkpoint_dir is not None else None
-        )
+        # self.checkpointer: Optional[Checkpointer] = (
+        #     Checkpointer(checkpoint_dir, interval_seconds=checkpoint_interval_seconds)
+        #     if checkpoint_dir is not None else None
+        # )
+        self.checkpointer = None  # will add later
 
         if memory_budget_mb is not None and memory_budget_bytes is None:
             memory_budget_bytes = int(memory_budget_mb * 1024 * 1024)
         self.memory_budget_bytes = memory_budget_bytes
         self.on_memory_warning = on_memory_warning
+
+        self.quack_address = quack_address
+        self.quack_token = quack_token
+        self._quack_thread: Optional[threading.Thread] = None
+
 
         self._lock = threading.RLock()
         self._running = False
@@ -160,10 +170,12 @@ class RillEngine:
         """
         Restores table states from the configured `checkpoint_dir` if present.
         """
-        with self._lock:
-            if self.checkpointer is not None:
-                return self.checkpointer.restore_snapshots(self)
-            return []
+        # with self._lock:
+        #     if self.checkpointer is not None:
+        #         return self.checkpointer.restore_snapshots(self)
+        #     return []
+        # will add later
+        return []
 
     def subscribe(self, table_name: str, callback: Callable[[str, pa.Table], None]) -> None:
         """
@@ -244,8 +256,9 @@ class RillEngine:
             self.metrics.evaluate_business_metrics(self)
 
             # 6. Periodic checkpointing
-            if self.checkpointer is not None and self.checkpointer.is_due(t0):
-                self.checkpointer.save_snapshots(self, current_time=t0)
+            # if self.checkpointer is not None and self.checkpointer.is_due(t0):
+            #     self.checkpointer.save_snapshots(self, current_time=t0)
+            # will add later
 
             # 7. Check PyArrow memory budget
             self.check_memory_budget()
@@ -292,14 +305,23 @@ class RillEngine:
                 return
             self._running = True
 
-            if self.checkpointer is not None:
-                self.checkpointer.restore_snapshots(self)
+            # if self.checkpointer is not None:
+            #     self.checkpointer.restore_snapshots(self)
+            # will add later
 
             for connector in self.connectors:
                 connector.start()
 
             self._thread = threading.Thread(target=self._run_loop, name="RillEngineLoop", daemon=True)
             self._thread.start()
+
+            if self.quack_address is not None:
+                self._quack_thread = threading.Thread(
+                    target=self._run_quack_server,
+                    name="RillQuackServer",
+                    daemon=True
+                )
+                self._quack_thread.start()
 
     def stop(self, timeout: float = 2.0) -> None:
         """
@@ -314,9 +336,61 @@ class RillEngine:
             self._thread.join(timeout=timeout)
             self._thread = None
 
+        if self._quack_thread is not None:
+            if self._quack_thread.is_alive():
+                import duckdb
+                db_name = getattr(self.duckdb, 'db_name', None) or ':memory:'
+                try:
+                    # Signal the Quack server to stop
+                    stop_con = duckdb.connect(database=db_name)
+                    stop_con.execute("LOAD quack;")
+                    stop_con.execute(f"CALL quack_stop('{self.quack_address}');")
+                except Exception:
+                    pass
+                self._quack_thread.join(timeout=timeout)
+            self._quack_thread = None
+
         with self._lock:
             for connector in self.connectors:
                 connector.stop()
+
+    def _run_quack_server(self) -> None:
+        """
+        Runs the DuckDB Quack server in a background thread.
+        """
+        import duckdb
+
+        db_name = getattr(self.duckdb, 'db_name', None) or ':memory:'
+        con = duckdb.connect(database=db_name)
+
+        try:
+            con.execute("INSTALL quack;")
+        except Exception:
+            try:
+                con.execute("INSTALL quack FROM community;")
+            except Exception:
+                try:
+                    con.execute("INSTALL quack FROM core_nightly;")
+                except Exception:
+                    pass
+
+        try:
+            con.execute("LOAD quack;")
+        except Exception as e:
+            print(f"[Rill Quack Server] Error loading quack extension: {e}")
+            return
+
+        try:
+            if self.quack_token:
+                res = con.execute(f"CALL quack_serve('{self.quack_address}', token='{self.quack_token}', allow_other_hostname => true);").fetchone()
+            else:
+                res = con.execute(f"CALL quack_serve('{self.quack_address}', allow_other_hostname => true);").fetchone()
+            if res and len(res) >= 3 and not self.quack_token:
+                self.quack_token = str(res[2])
+            token_display = f" | Auth Token: {self.quack_token}" if self.quack_token else ""
+            print(f"[Rill Quack Server] Active at {res[0] if res else self.quack_address}{token_display}")
+        except Exception as e:
+            print(f"[Rill Quack Server] Error serving at {self.quack_address}: {e}")
 
     def _run_loop(self) -> None:
         """

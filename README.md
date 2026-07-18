@@ -4,7 +4,7 @@
 [![PyArrow](https://img.shields.io/badge/Powered%20by-PyArrow-orange.svg)](https://arrow.apache.org/)
 [![DuckDB](https://img.shields.io/badge/SQL%20Engine-DuckDB-yellow.svg)](https://duckdb.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![CI Status](https://github.com/your-username/rill/actions/workflows/tests.yml/badge.svg)](.github/workflows/tests.yml)
+[![CI Status](https://github.com/lijose/rill/actions/workflows/tests.yml/badge.svg)](.github/workflows/tests.yml)
 
 **Rill** is a lightweight, single-node micro-batching engine designed for high-performance streaming analytics using pure **PyArrow** and zero-copy **DuckDB**.
 
@@ -82,7 +82,7 @@ Execute standard SQL queries across any live `pyarrow.Table` using zero-copy Duc
 Install Rill locally or in editable mode with development & connector dependencies:
 
 ```bash
-git clone https://github.com/your-username/rill.git
+git clone https://github.com/lijose/rill.git
 cd rill
 pip install -e .[dev,connectors]
 ```

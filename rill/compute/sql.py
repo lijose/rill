@@ -60,28 +60,35 @@ class DuckDBBridge:
         self._lock = threading.RLock()
         if connection is not None:
             self.con = connection
+            self.db_name = None
         else:
-            # Create an in-memory DuckDB connection
-            self.con = duckdb.connect(database=':memory:')
+            # Create a named in-memory DuckDB connection to allow sharing database catalog across process connections
+            self.db_name = f':memory:rill_{id(engine)}'
+            self.con = duckdb.connect(database=self.db_name)
 
     def register_tables(self) -> None:
         """
         Zero-copy registers all active RillTable PyArrow instances into the DuckDB connection.
+        Also registers/updates the special 'rill_metrics' system/performance metrics table.
         """
         with self._lock:
             for name, rill_table in self.engine.tables.items():
                 arrow_tab = rill_table.to_arrow()
                 if arrow_tab is not None:
-                    # con.register creates a view directly over PyArrow C++ data without data duplication
                     try:
-                        self.con.register(name, arrow_tab)
-                    except Exception as e:
-                        # Fallback or re-register if duckdb connection reset
-                        try:
-                            self.con.unregister(name)
-                            self.con.register(name, arrow_tab)
-                        except Exception:
-                            pass
+                        tmp_name = f"__tmp_{name}"
+                        self.con.register(tmp_name, arrow_tab)
+                        self.con.execute(f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM "{tmp_name}"')
+                    except Exception:
+                        pass
+            
+            # Register/update the dynamic rill_metrics table
+            try:
+                metrics_tab = self.engine.metrics.get_metrics_arrow_table(self.engine)
+                self.con.register("__tmp_rill_metrics", metrics_tab)
+                self.con.execute("CREATE OR REPLACE TABLE rill_metrics AS SELECT * FROM __tmp_rill_metrics")
+            except Exception:
+                pass
 
     def query(self, sql: str) -> pa.Table:
         """

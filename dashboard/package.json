@@ -1,0 +1,14 @@
+{
+  "name": "rill-dashboard",
+  "version": "1.0.0",
+  "description": "Standalone web dashboard for Rill metrics via DuckDB Quack",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "duckdb": "^1.1.1",
+    "express": "^4.19.2",
+    "ws": "^8.21.1"
+  }
+}
