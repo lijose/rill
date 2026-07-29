@@ -83,8 +83,8 @@ Execute standard SQL queries across any live `pyarrow.Table` using zero-copy Duc
 ### 8. Quack Server & WebSocket Bridge (`quack:0.0.0.0:9494`)
 Expose all internal Rill tables and real-time engine telemetry over native TCP/IP using the **Quack Protocol**. When enabled via `engine.start(quack_port=9494, quack_token="secure_token")`, Rill starts a background server thread that allows external tools, worker processes, and dashboards to securely query live PyArrow memory with zero-copy shared memory semantics.
 
-### 9. Dynamic Business Metrics & KPIs (`register_business_metric`)
-Register custom PyArrow analytical formulas (`engine.register_business_metric(name, formula_fn)`) that evaluate in real-time on every micro-batch tick. These metrics automatically calculate domain KPIs—such as maximum order tickets, cumulative revenue, and cancellation ratios—without writing ad-hoc polling loops.
+### 9. Dynamic KPI Dashboards via Scheduled Queries
+Define Scheduled SQL Tasks (`engine.add_dashboard_scheduled_query(...)`) to dynamically extract and aggregate domain KPIs (e.g., maximum order tickets, cumulative revenue) in real-time. The dashboard instantly renders these live views as business metrics and evaluates threshold alerts against them.
 
 ### 10. Structured Alerts & Observability Pipeline
 Rill includes a full-stack **alerts and observability pipeline** that captures engine exceptions, user-pushed alerts, and threshold-based rule triggers into a persistent `rill_alerts` DuckDB table — visible in real-time on the dashboard.
@@ -115,10 +115,10 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                        NODE.JS / BROWSER DASHBOARD                              │
 │  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │ 💎 Key Business Intelligence & Formulas (Live PyArrow Evaluated)          │  │
+│  │ 💎 Key Business Intelligence & Scheduled Queries (Live Streaming)         │  │
 │  │  [ max_order_amount ($): $497.34 ]  [ total_revenue ($): $13,025.21 ]     │  │
 │  │  [ cancelled_ratio: 26.5% ]                                               │  │
-│  │  📈 Business Trend Line Plot          📊 Business Distribution Histogram  │  │
+│  │  📈 Scheduled Line & Bar Charts evaluating Live SQL Data                  │  │
 │  └───────────────────────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────────────────────┐  │
 │  │ ⚙️ Engine Infrastructure & Resource Utilization                           │  │
@@ -139,7 +139,7 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 
 ### Dashboard Highlights:
 - **📊 Multi-View Glassmorphic Navigation**: Seamlessly switch between the **Metrics Console**, **Custom Queries**, **Alert Rules & Settings**, and **Alert Logs** right from the top bar.
-- **💎 Business Intelligence Centerpiece**: Prominently displays custom KPIs (`max_order_amount`, `total_revenue`, `cancelled_ratio`) and evaluates live PyArrow formulas on every tick.
+- **💎 Business Intelligence Centerpiece**: Highlights Custom Scheduled Queries mapped to Live Charts and extracts numeric results into business KPI metrics that trigger alerts instantaneously.
 - **🔍 Custom SQL Queries & Chart Mapping**: Write, execute, and schedule ad-hoc SQL queries against the on-disk `rill_metrics` database. Map query results on the fly to **Interactive Line, Bar, and Scatter Charts** with zoom/pan capabilities powered by `chartjs-plugin-zoom`.
 - **⚙️ Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, DuckDB storage size (`Live` vs `Metrics` DB), throughput (RPS), and step latency into a dedicated secondary monitoring section.
 - **🔔 Unified Alert Logs**: Displays engine-side exceptions, user-pushed alerts, and threshold rule triggers in a single unified view with **severity badges** (🔴🟡🔵), **source badges** (👤 User / ⚙️ Engine / ⚡ Rule), **filter toggles** (All / Errors / Warnings / User / Engine / Rules), and severity-colored **toast notifications** for real-time visibility.
@@ -208,14 +208,15 @@ orders_schema = schema([
 
 engine.register_table("orders", schema=orders_schema)
 
-# 3. Register custom live PyArrow Business Metrics evaluated on every tick
-def calc_max_order(engine):
-    table = engine.get_table("orders").to_arrow()
-    if table.num_rows == 0:
-        return 0.0
-    return pc.max(table.column("amount")).as_py()
-
-engine.register_business_metric("max_order_amount ($)", calc_max_order)
+# 3. Schedule a live dashboard query to compute business KPIs
+engine.add_dashboard_scheduled_query(
+    name="Max Order Amount",
+    query="SELECT MAX(amount) as max_amount FROM orders",
+    interval_seconds=1.0,
+    chart_type="bar",
+    x_col="ts",
+    y_col="max_amount"
+)
 
 # 4. Attach memory connector to 'orders' table
 connector = MemoryConnector(target_table="orders")
@@ -243,10 +244,10 @@ connector.push(batch)
 
 time.sleep(1.2)
 
-# Retrieve finalized zero-copy C++ PyArrow tables and business metrics
-revenue_summary = engine.get_table("revenue_by_tier").to_arrow()
-print("Live Revenue Summary:\n", revenue_summary.to_pandas())
-print("Live Business Metrics:", engine.get_metrics())
+# The live data is fully isolated to prevent locking issues. 
+# Telemetry, Scheduled Queries, and Alerts can be read safely via metrics_con:
+alerts = engine.metrics_con.execute("SELECT * FROM rill_alerts LIMIT 5").df()
+print("Recent System Alerts:\n", alerts)
 
 engine.stop()
 ```

@@ -82,7 +82,7 @@ def test_dictionary_encoding_upsert_and_sql():
     connector.push(batch2)
     engine.step()
 
-    arrow_tbl = engine.get_table("users").to_arrow()
+    arrow_tbl = engine.tables.get("users").to_arrow()
     assert arrow_tbl.num_rows == 4
     # Dictionary columns are decoded to plain types during upsert to avoid
     # index alignment bugs when concatenating batches with different dictionaries.
@@ -90,7 +90,7 @@ def test_dictionary_encoding_upsert_and_sql():
     assert arrow_tbl.schema.field("tier").type in (pa.string(), pa.dictionary(pa.int8(), pa.string()))
 
     # Query via DuckDB zero-copy SQL over dictionary column
-    res = engine.query_sql("SELECT tier, COUNT(*) as cnt FROM users GROUP BY tier ORDER BY cnt DESC")
+    res = engine.duckdb.query("SELECT tier, COUNT(*) as cnt FROM users GROUP BY tier ORDER BY cnt DESC")
     pylist = res.to_pylist()
     # user 1: bronze, user 2: silver, user 3: bronze, user 4: gold -> bronze: 2, silver: 1, gold: 1
     counts = {row["tier"]: row["cnt"] for row in pylist}
@@ -123,7 +123,7 @@ def test_prepared_statement_sql_task():
     assert task.query in engine.duckdb._prepared_cache
     assert engine.duckdb._prepared_cache[task.query] is not None
 
-    totals = engine.get_table("metric_totals").to_arrow()
+    totals = engine.tables.get("metric_totals").to_arrow()
     assert totals is not None
     res_dict = {row["metric_name"]: row["total"] for row in totals.to_pylist()}
     assert res_dict["cpu"] == 25.0
@@ -156,7 +156,7 @@ def test_incremental_join_task():
     orders_conn.push({"order_id": [1, 2], "user_id": [101, 102], "amount": [100.0, 200.0]})
     engine.step()
 
-    enriched_1 = engine.get_table("enriched_orders").to_arrow()
+    enriched_1 = engine.tables.get("enriched_orders").to_arrow()
     assert enriched_1.num_rows == 2
     assert jtask._last_processed_rows == 2
 
@@ -164,7 +164,7 @@ def test_incremental_join_task():
     orders_conn.push({"order_id": [3], "user_id": [101], "amount": [300.0]})
     engine.step()
 
-    enriched_2 = engine.get_table("enriched_orders").to_arrow()
+    enriched_2 = engine.tables.get("enriched_orders").to_arrow()
     assert enriched_2.num_rows == 3
     assert jtask._last_processed_rows == 3
     countries = [r["country"] for r in enriched_2.to_pylist()]

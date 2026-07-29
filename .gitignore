@@ -56,6 +56,7 @@ venv.bak/
 # Rill Scratch & Checkpoint Files
 *.parquet
 *.db
+*.db.wal
 *.log
 checkpoints/
 data/

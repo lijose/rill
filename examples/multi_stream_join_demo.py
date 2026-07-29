@@ -122,19 +122,13 @@ def main():
 
         time.sleep(1.3)  # Wait for join tick + 1s SQL task
 
-        print("\n--- Current Enriched Table ('orders_enriched') ---")
-        enriched_tbl = output_api.get_table("orders_enriched")
-        if enriched_tbl:
-            for r in enriched_tbl.to_pylist():
-                print(f"  Order {r['order_id']} | User: {r['name']:<6} ({r['tier']:<8}, {r['region']}) | Amount: ${r['amount']:.2f}")
-
-        print("\n--- Aggregated Regional Revenue ('regional_revenue') ---")
-        reg_tbl = output_api.get_table("regional_revenue")
-        if reg_tbl:
-            for r in reg_tbl.to_pylist():
-                print(f"  Region: {r['region']:<15} | Tier: {r['tier']:<8} | Orders: {r['order_cnt']} | Total: ${r['total_revenue']:.2f}")
-
-        # Push more events: Carol places an order, Bob upgrades tier & places another order
+        print("\n--- Current Alerts & Telemetry in Metrics DB ---")
+        alerts_df = engine.metrics_con.execute("SELECT ts, severity, message FROM rill_alerts LIMIT 5").fetchall()
+        if alerts_df:
+            print(alerts_df)
+        else:
+            print("No alerts generated yet. System healthy.")
+        
         print("\n📥 Stream A & B -> Pushing profile update (Bob -> Platinum) and 2 new orders...")
         users_connector.push({
             "user_id": [20],
@@ -151,17 +145,9 @@ def main():
 
         time.sleep(1.3)
 
-        print("\n--- Updated Aggregated Regional Revenue ('regional_revenue') ---")
-        reg_tbl = output_api.get_table("regional_revenue")
-        if reg_tbl:
-            for r in reg_tbl.to_pylist():
-                print(f"  Region: {r['region']:<15} | Tier: {r['tier']:<8} | Orders: {r['order_cnt']} | Total: ${r['total_revenue']:.2f}")
-
-        # Checkpoint persistence check
-        # time.sleep(1.5)  # Allow checkpointer (2.0s interval) to save snapshots
-        # saved_files = list(checkpoint_dir.glob("*.parquet"))
-        # print(f"\n💾 Checkpointer persisted snapshots to disk: {[f.name for f in saved_files]}")
-        # will add later
+        print("\n--- Final Metrics Summary ---")
+        metrics_df = engine.metrics_con.execute("SELECT ts, metric_name, value FROM rill_metrics ORDER BY ts DESC LIMIT 10").fetchall()
+        print(metrics_df)
 
     finally:
         engine.stop()

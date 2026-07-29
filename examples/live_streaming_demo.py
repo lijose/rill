@@ -60,17 +60,6 @@ def main():
     )
     engine.add_sql_task(sql_task)
 
-    # 5. Register custom live business metric formula evaluated every tick
-    def max_active_order(eng):
-        tbl = eng.get_table("orders")
-        if tbl is None or tbl.num_rows == 0:
-            return 0.0
-        arrow_tbl = tbl.to_arrow()
-        import pyarrow.compute as pc
-        return pc.max(arrow_tbl.column("amount")).as_py()
-
-    engine.register_business_metric("max_order_amount", max_active_order)
-
     # 6. Subscribe callback to notifications when 'tier_revenue' table updates
     def on_revenue_updated(tbl_name, arrow_table):
         print(f"\n[Callback Notification] Table '{tbl_name}' updated! Rows: {arrow_table.num_rows}")
@@ -93,11 +82,9 @@ def main():
 
         time.sleep(1.2)  # Allow micro-batches and 1s SQL task to execute
 
-        print("\n--- Current Live Table: 'tier_revenue' ---")
-        revenue_tbl = output_api.get_table("tier_revenue")
-        if revenue_tbl is not None:
-            for row in revenue_tbl.to_pylist():
-                print(f"  Tier: {row['user_tier']:<8} | Revenue: ${row['total_revenue']:<8.2f} | Orders: {row['order_count']}")
+        print("\n--- Current Alerts in Metrics DB ---")
+        alerts_df = engine.metrics_con.execute("SELECT ts, severity, message FROM rill_alerts LIMIT 5").fetchall()
+        print(alerts_df)
 
         print("\n📥 Pushing upsert & new events (Updating order_id 2 to $99.00, adding order 4)...")
         connector.push({
@@ -109,11 +96,9 @@ def main():
 
         time.sleep(1.2)
 
-        print("\n--- Updated Live Table: 'tier_revenue' (via zero-copy DuckDB query) ---")
-        revenue_tbl = output_api.get_table("tier_revenue")
-        if revenue_tbl is not None:
-            for row in revenue_tbl.to_pylist():
-                print(f"  Tier: {row['user_tier']:<8} | Revenue: ${row['total_revenue']:<8.2f} | Orders: {row['order_count']}")
+        print("\n--- Updated Alerts in Metrics DB ---")
+        alerts_df = engine.metrics_con.execute("SELECT ts, severity, message FROM rill_alerts LIMIT 5").fetchall()
+        print(alerts_df)
 
         print("\n--- Real-time Engine Metrics & Business Formulas ---")
         all_metrics = output_api.get_all_scalars()
@@ -121,19 +106,11 @@ def main():
         print(f"  Avg Micro-Batch Latency : {all_metrics['avg_batch_latency_ms']} ms")
         print(f"  Throughput              : {all_metrics['records_per_second']} records/sec")
         print(f"  Table Row Counts        : {all_metrics['table_row_counts']}")
-        print(f"  Max Order Amount (Live) : ${all_metrics['business_metrics']['max_order_amount']}")
 
-        # 8. Test ad-hoc zero-copy DuckDB SQL query
-        print("\n🔍 Running ad-hoc DuckDB zero-copy query over 'orders'...")
-        high_value = engine.query_sql("SELECT * FROM orders WHERE amount > 200.0 ORDER BY amount DESC")
-        for row in high_value.to_pylist():
-            print(f"  [High Value Order] ID: {row['order_id']} | Tier: {row['user_tier']} | Amount: ${row['amount']:.2f}")
-
-        # 9. Sink finalized table to disk
-        sink_path = Path("/tmp/rill_demo_output/tier_revenue.parquet")
-        success = output_api.sink_to_file("tier_revenue", sink_path, format="parquet")
-        if success:
-            print(f"\n💾 Successfully persisted live table 'tier_revenue' to {sink_path}")
+        # 8. Test ad-hoc zero-copy metrics query
+        print("\n🔍 Running ad-hoc DuckDB zero-copy query over 'rill_alerts'...")
+        high_value = engine.metrics_con.execute("SELECT * FROM rill_alerts ORDER BY ts DESC LIMIT 2").fetchall()
+        print(high_value)
 
     finally:
         engine.stop()

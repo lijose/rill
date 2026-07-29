@@ -4,8 +4,7 @@ let activeConnections = []; // Array of { id, address, token, status: 'connectin
 let activeConnectionId = null; // ID of the currently selected tab connection
 let nextConnectionId = 1;
 let resourceChart = null;
-let businessTrendChart = null;
-let businessHistChart = null;
+// Removed business charts as they are replaced by scheduled query views
 let currentView = 'metrics'; // 'metrics' | 'alert-settings' | 'alert-logs'
 
 // Alert Settings & Rules State (Persisted via localStorage)
@@ -97,7 +96,7 @@ let customQueryChart = null;
 let lastQueryResult = null;
 
 // Business DOM & Controls
-const businessCardsGrid = document.getElementById('business-cards-grid');
+// Removed businessCardsGrid
 const historyFilter = document.getElementById('history-filter');
 
 // Alert Settings & Rules DOM
@@ -192,8 +191,15 @@ function initWebSocket() {
                 const usedMem = Number(data.used_memory || 0);
                 const memPct = totalMem > 0 ? (usedMem / totalMem) * 100 : 0;
 
+                let tsSecs;
+                if (typeof data.timestamp === 'string' && data.timestamp.includes('T')) {
+                    tsSecs = new Date(data.timestamp).getTime() / 1000;
+                } else {
+                    tsSecs = Number(data.timestamp);
+                }
+
                 const latestRecord = {
-                    timestamp: Number(data.timestamp),
+                    timestamp: tsSecs,
                     cpu: Number(data.cpu_usage || 0),
                     memTotal: totalMem,
                     memUsed: usedMem,
@@ -229,6 +235,63 @@ function initWebSocket() {
             } else if (payload.type === 'engine_alerts') {
                 // Server-side engine/user alerts from rill_alerts table
                 handleEngineAlerts(payload.data, connObj);
+            } else if (payload.type === 'scheduled_query_sync') {
+                const config = payload.config;
+                window.scheduledConfigs = window.scheduledConfigs || {};
+                
+                if (!window.scheduledConfigs[config.queryId]) {
+                    window.scheduledConfigs[config.queryId] = config;
+                    
+                    // Render in the UI table if active connection
+                    if (activeConnectionId === tabId) {
+                        const tr = document.createElement('tr');
+                        tr.id = `sched-row-${config.queryId}`;
+                        const customName = config.name || '-';
+                        const sql = config.sql || '';
+                        tr.innerHTML = `
+                            <td><strong>${customName}</strong></td>
+                            <td>${config.queryId.substring(0, 8)}...</td>
+                            <td title="${sql}">${sql.length > 30 ? sql.substring(0, 30) + '...' : sql}</td>
+                            <td>${config.intervalSeconds}s</td>
+                            <td class="last-run">Pending</td>
+                            <td class="last-result">Waiting...</td>
+                            <td style="text-align: right;">
+                                <button class="btn btn-secondary unschedule-btn" data-qid="${config.queryId}">Stop</button>
+                            </td>
+                        `;
+                        
+                        const emptyRow = scheduledQueriesTbody.querySelector('.empty-table-row');
+                        if (emptyRow) emptyRow.remove();
+                        
+                        scheduledQueriesTbody.appendChild(tr);
+                        
+                        tr.querySelector('.unschedule-btn').addEventListener('click', () => {
+                            ws.send(JSON.stringify({
+                                action: 'unschedule_query',
+                                tabId: activeConnectionId,
+                                queryId: config.queryId
+                            }));
+                            
+                            tr.remove();
+                            if (scheduledQueriesTbody.children.length === 0) {
+                                scheduledQueriesTbody.innerHTML = '<tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>';
+                            }
+                            
+                            delete window.scheduledConfigs[config.queryId];
+                            if (window.scheduledCharts && window.scheduledCharts[config.queryId]) {
+                                window.scheduledCharts[config.queryId].destroy();
+                                delete window.scheduledCharts[config.queryId];
+                            }
+                            const widget = document.getElementById(`widget-${config.queryId}`);
+                            if (widget) widget.remove();
+                            
+                            const grid = document.getElementById('scheduled-widgets-grid');
+                            if (grid && grid.children.length === 0) {
+                                document.getElementById('scheduled-widgets-container').style.display = 'none';
+                            }
+                        });
+                    }
+                }
             }
         } catch (err) {
             console.error("Error processing WebSocket message:", err);
@@ -291,43 +354,7 @@ function initChart() {
         }
     });
 
-    // 2. Business Trend Line Plot
-    const ctxBizTrend = document.getElementById('business-trend-chart').getContext('2d');
-    businessTrendChart = new Chart(ctxBizTrend, {
-        type: 'line',
-        data: { labels: [], datasets: [] },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: true, position: 'top', labels: { boxWidth: 12 } },
-                tooltip: { mode: 'index', intersect: false }
-            },
-            scales: {
-                x: { grid: { color: 'rgba(255, 255, 255, 0.03)' }, ticks: { maxTicksLimit: 10 } },
-                y: { grid: { color: 'rgba(255, 255, 255, 0.03)' } }
-            }
-        }
-    });
-
-    // 3. Business Distribution Histogram (Bar Chart)
-    const ctxBizHist = document.getElementById('business-hist-chart').getContext('2d');
-    businessHistChart = new Chart(ctxBizHist, {
-        type: 'bar',
-        data: { labels: [], datasets: [] },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: { mode: 'index', intersect: false }
-            },
-            scales: {
-                x: { grid: { color: 'rgba(255, 255, 255, 0.03)' } },
-                y: { grid: { color: 'rgba(255, 255, 255, 0.03)' }, beginAtZero: true }
-            }
-        }
-    });
+    // Old business charts removed
 }
 
 // Format Helpers
@@ -398,35 +425,11 @@ function updateDashboardUI(latest) {
         valDuckdbMetrics.innerText = `Metrics: ${formatBytes(latest.duckdbMetrics)}`;
     }
 
-    // 2. Business Centerpiece Cards
-    businessCardsGrid.innerHTML = '';
-    const keys = Object.keys(latest.businessMetrics);
-    if (keys.length === 0) {
-        businessCardsGrid.innerHTML = '<p class="no-data">No custom metrics registered.</p>';
-    } else {
-        keys.forEach(key => {
-            const card = document.createElement('div');
-            card.className = 'biz-kpi-card';
-            
-            let displayVal = latest.businessMetrics[key];
-            if (typeof displayVal === 'number') {
-                displayVal = displayVal.toFixed(2);
-            } else if (typeof displayVal === 'object') {
-                displayVal = JSON.stringify(displayVal);
-            }
-
-            card.innerHTML = `
-                <div class="biz-kpi-title">${key}</div>
-                <div class="biz-kpi-value">${displayVal}</div>
-            `;
-            businessCardsGrid.appendChild(card);
-        });
-    }
+    // Old business cards logic removed
 }
 
-// Update all charts (System + Business Trend Line + Business Histogram)
 function updateChartUI() {
-    if (!resourceChart || !businessTrendChart || !businessHistChart || activeConnectionId === null || currentView !== 'metrics') return;
+    if (!resourceChart || activeConnectionId === null || currentView !== 'metrics') return;
     
     const connObj = activeConnections.find(c => c.id === activeConnectionId);
     if (!connObj) return;
@@ -446,64 +449,7 @@ function updateChartUI() {
     resourceChart.data.datasets[1].data = filteredHistory.map(item => item.memPct);
     resourceChart.update('none');
 
-    // 2. Update Business Trend Chart (Line Plot)
-    const labels = filteredHistory.map(item => formatTime(item.timestamp));
-    const allKeys = new Set();
-    filteredHistory.forEach(item => {
-        if (item.businessMetrics) {
-            Object.keys(item.businessMetrics).forEach(k => {
-                if (extractNumeric(item.businessMetrics[k]) !== null) {
-                    allKeys.add(k);
-                }
-            });
-        }
-    });
-
-    const colors = ['#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#8b5cf6'];
-    const datasets = Array.from(allKeys).map((key, i) => {
-        const color = colors[i % colors.length];
-        return {
-            label: key,
-            data: filteredHistory.map(item => {
-                const val = item.businessMetrics ? item.businessMetrics[key] : null;
-                return extractNumeric(val) || 0;
-            }),
-            borderColor: color,
-            backgroundColor: color.replace(')', ', 0.1)').replace('rgb', 'rgba'),
-            borderWidth: 2,
-            tension: 0.3,
-            pointRadius: 0
-        };
-    });
-
-    businessTrendChart.data.labels = labels;
-    businessTrendChart.data.datasets = datasets;
-    businessTrendChart.update('none');
-
-    // 3. Update Business Distribution Chart (Histogram / Summary Bars)
-    if (connObj.lastMetrics && connObj.lastMetrics.businessMetrics) {
-        const histLabels = [];
-        const histValues = [];
-        const histColors = [];
-        
-        Object.keys(connObj.lastMetrics.businessMetrics).forEach((key, idx) => {
-            const num = extractNumeric(connObj.lastMetrics.businessMetrics[key]);
-            if (num !== null) {
-                histLabels.push(key);
-                histValues.push(num);
-                histColors.push(colors[idx % colors.length]);
-            }
-        });
-
-        businessHistChart.data.labels = histLabels;
-        businessHistChart.data.datasets = [{
-            label: 'Current Snapshot / Value',
-            data: histValues,
-            backgroundColor: histColors,
-            borderRadius: 6
-        }];
-        businessHistChart.update('none');
-    }
+    // Removed Business Trend Chart and Histogram updates
 }
 
 // Render tabs list dynamically (with offline/grey tab styling)
@@ -600,7 +546,6 @@ function selectTab(id) {
             valTotalRecords.innerText = 'Total: 0 processed';
             valLatency.innerText = '0.00 ms';
             valAvgLatency.innerText = 'Avg: 0.00 ms';
-            businessCardsGrid.innerHTML = '<p class="no-data">Fetching metrics...</p>';
         }
         
         updateChartUI();
@@ -1462,6 +1407,26 @@ document.addEventListener('DOMContentLoaded', () => {
                         animation: false
                     }
                 });
+            }
+
+            // Expose scheduled query numeric columns as business metrics for alerts
+            if (rows && rows.length > 0) {
+                const connObj = activeConnections.find(c => c.id === activeConnectionId);
+                if (connObj && connObj.lastMetrics && connObj.lastMetrics.businessMetrics) {
+                    const latestRow = rows[rows.length - 1]; // After sort, last row is usually latest in time
+                    const newMetrics = {};
+                    for (const [key, value] of Object.entries(latestRow)) {
+                        if (key !== 'ts' && key !== 'timestamp' && typeof value === 'number' && !isNaN(value)) {
+                            const metricName = `${config.name || payload.queryId} - ${key}`;
+                            connObj.lastMetrics.businessMetrics[metricName] = value;
+                            newMetrics[metricName] = value;
+                        }
+                    }
+                    if (Object.keys(newMetrics).length > 0) {
+                        updateBusinessMetricsDropdown(newMetrics);
+                        evaluateAlerts(connObj.lastMetrics, connObj);
+                    }
+                }
             }
         }
     };

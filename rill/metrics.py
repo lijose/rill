@@ -140,7 +140,8 @@ class AlertEntry:
     __slots__ = ('ts', 'severity', 'source', 'message', 'detail')
 
     def __init__(self, severity: str, source: str, message: str, detail: str = ""):
-        self.ts = time.time()
+        import datetime
+        self.ts = datetime.datetime.now().isoformat()
         self.severity = severity
         self.source = source
         self.message = message
@@ -154,13 +155,32 @@ def create_alerts_table(con) -> None:
     """Creates the rill_alerts table if it doesn't exist."""
     con.execute("""
         CREATE TABLE IF NOT EXISTS rill_alerts (
-            ts DOUBLE,
+            ts VARCHAR,
             severity VARCHAR,
             source VARCHAR,
             message VARCHAR,
             detail VARCHAR
         )
     """)
+
+
+def create_dashboard_queries_table(con) -> None:
+    """Creates the rill_dashboard_queries table if it doesn't exist."""
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS rill_dashboard_queries (
+            query_id VARCHAR,
+            name VARCHAR,
+            sql VARCHAR,
+            interval DOUBLE,
+            chart_type VARCHAR,
+            x_col VARCHAR,
+            y_col VARCHAR,
+            color_col VARCHAR,
+            created_at VARCHAR
+        )
+    """)
+    # Flush existing scheduled queries on startup to prevent duplicates across job restarts
+    con.execute("DELETE FROM rill_dashboard_queries")
 
 
 # ── MetricsRegistry ─────────────────────────────────────────────────────────
@@ -408,7 +428,9 @@ class MetricsRegistry:
         except Exception:
             pass
 
-        ts = time.time()
+        import datetime
+        ts_float = time.time()
+        ts = datetime.datetime.fromtimestamp(ts_float).isoformat()
 
         metrics_list = [
             (ts, "cpu_usage", float(cpu_usage)),
@@ -456,7 +478,9 @@ class MetricsRegistry:
             con.executemany("INSERT INTO rill_metrics VALUES (?, ?, ?)", metrics_list)
 
             # Scheduled retention
-            cutoff = ts - getattr(engine, 'metrics_ttl_seconds', 600.0)
+            import datetime
+            cutoff_float = ts_float - getattr(engine, 'metrics_ttl_seconds', 600.0)
+            cutoff = datetime.datetime.fromtimestamp(cutoff_float).isoformat()
             con.execute("DELETE FROM rill_metrics WHERE ts < ?", [cutoff])
 
             # Write task metrics to individual tables
@@ -464,7 +488,7 @@ class MetricsRegistry:
                 if hasattr(self, 'task_latencies'):
                     for task_name, lat in self.task_latencies.items():
                         t_name = f"task_metrics_{sanitize_name(task_name)}"
-                        con.execute(f"CREATE TABLE IF NOT EXISTS {t_name} (ts DOUBLE, latency_ms DOUBLE)")
+                        con.execute(f"CREATE TABLE IF NOT EXISTS {t_name} (ts VARCHAR, latency_ms DOUBLE)")
                         con.execute(f"INSERT INTO {t_name} VALUES (?, ?)", [ts, float(lat)])
                         con.execute(f"DELETE FROM {t_name} WHERE ts < ?", [cutoff])
 
@@ -473,7 +497,7 @@ class MetricsRegistry:
                 try:
                     val = float(v)
                     b_name = f"business_metrics_{sanitize_name(k)}"
-                    con.execute(f"CREATE TABLE IF NOT EXISTS {b_name} (ts DOUBLE, value DOUBLE)")
+                    con.execute(f"CREATE TABLE IF NOT EXISTS {b_name} (ts VARCHAR, value DOUBLE)")
                     con.execute(f"INSERT INTO {b_name} VALUES (?, ?)", [ts, val])
                     con.execute(f"DELETE FROM {b_name} WHERE ts < ?", [cutoff])
                 except (ValueError, TypeError):
@@ -498,7 +522,6 @@ class MetricsRegistry:
                     alert_rows
                 )
                 # Alert retention
-                cutoff = ts - getattr(engine, 'metrics_ttl_seconds', 600.0)
                 con.execute("DELETE FROM rill_alerts WHERE ts < ?", [cutoff])
                 con.commit()
             except Exception:

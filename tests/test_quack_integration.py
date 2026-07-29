@@ -11,7 +11,7 @@ def test_quack_metrics_registration():
     engine.step()
     
     # Query rill_metrics table directly from the local DuckDB bridge
-    metrics_tbl = engine.query_sql("SELECT * FROM rill_metrics")
+    metrics_tbl = engine.duckdb.query("SELECT * FROM rill_metrics")
     assert metrics_tbl.num_rows == 1
     
     # Verify that the schema matches what we expect

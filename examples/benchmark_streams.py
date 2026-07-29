@@ -249,13 +249,13 @@ def run_benchmark(
     
     # Query Top 10 Impressions
     t_sql_imp_start = time.perf_counter()
-    top_impressions = engine.query_sql(sql_impressions)
+    top_impressions = engine.duckdb.query(sql_impressions)
     t_sql_imp_end = time.perf_counter()
     sql_imp_ms = (t_sql_imp_end - t_sql_imp_start) * 1000.0
 
     # Query Top 10 Clicks
     t_sql_click_start = time.perf_counter()
-    top_clicks = engine.query_sql(sql_clicks)
+    top_clicks = engine.duckdb.query(sql_clicks)
     t_sql_click_end = time.perf_counter()
     sql_click_ms = (t_sql_click_end - t_sql_click_start) * 1000.0
 
@@ -285,8 +285,8 @@ def run_benchmark(
     # 7. Measure Vectorized TTL Retention Pruning Bottleneck
     print("\n🧹 Measuring Vectorized TTL Pruning Overhead (C++ pyarrow.compute.filter over all rows)...")
     t_ttl_start = time.perf_counter()
-    engine.get_table("impressions").apply_retention(current_time=now_ts)
-    engine.get_table("clicks").apply_retention(current_time=now_ts)
+    engine.tables["impressions"].apply_retention(current_time=now_ts)
+    engine.tables["clicks"].apply_retention(current_time=now_ts)
     t_ttl_end = time.perf_counter()
     ttl_prune_ms = (t_ttl_end - t_ttl_start) * 1000.0
     print(f"   🧹 TTL Retention Pruning Latency: {ttl_prune_ms:.2f} ms across {total_records:,} rows")

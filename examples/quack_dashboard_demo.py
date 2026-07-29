@@ -29,7 +29,7 @@ def main():
     engine = RillEngine(
         trigger_interval_ms=500.0,
         quack_address="quack:0.0.0.0:9494",
-        quack_token="demo_token"
+        quack_token="demo"
     )
     output_api = OutputAPI(engine)
 
@@ -60,49 +60,71 @@ def main():
             GROUP BY user_tier
         """,
         output_table="tier_revenue",
-        interval_seconds=1.0,
+        interval_seconds=5.0,
         primary_key="user_tier"
     )
     engine.add_sql_task(sql_task)
 
     # 5. Register custom business formulas evaluated every micro-batch tick
-    import pyarrow.compute as pc
+    # Commented out as we are not accessing the live db tables currently
+    # import pyarrow.compute as pc
 
-    def calc_max_order(eng):
-        tbl = eng.get_table("orders")
-        if not tbl or tbl.num_rows == 0:
-            return 0.0
-        return round(pc.max(tbl.to_arrow().column("amount")).as_py(), 2)
+    # 6. Add Dashboard Scheduled Queries (Metrics DB)
+    engine.add_dashboard_scheduled_query(
+        name="System CPU Trend",
+        sql ="select ts, value as cpu from remote_db.rill_metrics where metric_name ='cpu_usage' ORDER BY ts DESC LIMIT 60",
+        interval_seconds=1.0,
+        chart_type="line",
+        x_col="ts",
+        y_col="cpu"
+    )
 
-    def calc_total_revenue(eng):
-        tbl = eng.get_table("orders")
-        if not tbl or tbl.num_rows == 0:
-            return 0.0
-        return round(pc.sum(tbl.to_arrow().column("amount")).as_py(), 2)
+    engine.add_dashboard_scheduled_query(
+        name="PyArrow Allocation",
+        sql ="select ts, value as ram from remote_db.rill_metrics where metric_name ='pyarrow_allocated_bytes' ORDER BY ts DESC LIMIT 60",
+        interval_seconds=1.0,
+        chart_type="line",
+        x_col="ts",
+        y_col="ram"
+    )
 
-    def calc_cancelled_ratio(eng):
-        tbl = eng.get_table("orders")
-        if not tbl or tbl.num_rows == 0:
-            return "0.0%"
-        arrow_tbl = tbl.to_arrow()
-        statuses = arrow_tbl.column("status")
-        cancelled_count = pc.sum(pc.cast(pc.equal(statuses, "cancelled"), pa.int64())).as_py()
-        pct = (cancelled_count / tbl.num_rows) * 100
-        return f"{pct:.1f}%"
+    engine.add_dashboard_scheduled_query(
+        name="Latest Snapshot",
+        # sql="SELECT ts, cpu_usage FROM remote_db.rill_metrics ORDER BY ts DESC LIMIT 60",
+        sql =""" 
+        select user_tier, total_revenue
+        from 
+        (
+        select user_tier, total_revenue, order_count, rank() over( order by  insert_ts desc) rnk
+        from remote_db.tier_revenue
+        )a where rnk =1 
 
-    engine.register_business_metric("max_order_amount ($)", calc_max_order)
-    engine.register_business_metric("total_revenue ($)", calc_total_revenue)
-    engine.register_business_metric("cancelled_ratio", calc_cancelled_ratio)
+        """,
+        interval_seconds=5.0,
+        chart_type="bar",
+        x_col="user_tier",
+        y_col="total_revenue",
+        color_col="user_tier"
+    )
 
-    # 6. Start Engine Background Loop & Quack Thread
+    # engine.add_dashboard_scheduled_query(
+    #     name="Total Revenue ($)",
+    #     sql="SELECT ts, value FROM remote_db.business_metrics_total_revenue____ ORDER BY ts DESC LIMIT 60",
+    #     interval_seconds=1.0,
+    #     chart_type="line",
+    #     x_col="ts",
+    #     y_col="value"
+    # )
+
+    # 7. Start Engine Background Loop & Quack Thread
     engine.start()
     print("\n✅ Rill Engine is running!")
     print("📡 Quack Server exposed at: quack:127.0.0.1:9494")
-    print("🔑 Quack Auth Token:      demo_token")
+    print("🔑 Quack Auth Token:      demo")
     print("\n👉 Next Steps:")
     print("   1. Open the Node.js Dashboard: http://localhost:3000")
     print("   2. In Quack Server Address, enter: quack:127.0.0.1:9494")
-    print("   3. In Quack Auth Token, enter:     demo_token")
+    print("   3. In Quack Auth Token, enter:     demo")
     print("   4. Watch live charts, metrics, and table histories update every second!\n")
     print("Press Ctrl+C to stop the simulation.\n")
 

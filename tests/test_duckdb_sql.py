@@ -17,7 +17,7 @@ def test_duckdb_zero_copy_query():
     }))
 
     # Run ad-hoc SQL query via DuckDB directly over PyArrow table
-    result = engine.query_sql("SELECT tier, SUM(spend) AS total_spend, COUNT(*) AS cnt FROM users GROUP BY tier")
+    result = engine.duckdb.query("SELECT tier, SUM(spend) AS total_spend, COUNT(*) AS cnt FROM users GROUP BY tier")
     assert result is not None
     assert result.num_rows == 2
 
@@ -53,7 +53,7 @@ def test_scheduled_sql_task_trigger():
     # Execute a step right away - since last_run_time is 0, task should run immediately
     engine.step()
 
-    summary_tbl = engine.get_table("category_summary")
+    summary_tbl = engine.tables.get("category_summary")
     assert summary_tbl is not None
     assert summary_tbl.num_rows == 2
 

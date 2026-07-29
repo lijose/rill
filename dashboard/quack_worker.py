@@ -30,12 +30,14 @@ class CustomJSONEncoder(json.JSONEncoder):
 json.dumps = lambda obj, **kwargs: _orig_dumps(obj, cls=CustomJSONEncoder, **kwargs)
 
 db_lock = threading.RLock()
-scheduled_queries = {}  # queryId -> { 'sql': str, 'interval': float, 'last_run': float }
+# Track scheduled dashboard queries
+scheduled_queries = {}
+deleted_scheduled_queries = set()
 
 ALLOWLIST_REGEX = re.compile(r'^\s*(SELECT|WITH|EXPLAIN|PRAGMA\s+show_tables|DESCRIBE|SHOW)\b', re.IGNORECASE)
 
 # Track the last alert timestamp we've seen to only send new alerts
-_last_alert_ts = 0.0
+_last_alert_ts = ""
 
 def is_allowed_sql(sql):
     # Strip comments and trim
@@ -69,7 +71,7 @@ def metrics_loop(con):
                     sql = f"""
                         SELECT ts, metric_name, value 
                         FROM remote_db.rill_metrics 
-                        WHERE ts = {max_ts}
+                        WHERE ts = '{max_ts}'
                     """
                     res = con.execute(sql).fetchall()
                     if res:
@@ -92,7 +94,7 @@ def metrics_loop(con):
                 alerts_sql = f"""
                     SELECT ts, severity, source, message, detail
                     FROM remote_db.rill_alerts
-                    WHERE ts > {_last_alert_ts}
+                    WHERE ts > '{_last_alert_ts}'
                     ORDER BY ts ASC
                     LIMIT 50
                 """
@@ -114,6 +116,39 @@ def metrics_loop(con):
             # rill_alerts table may not exist yet, that's ok
             if "rill_alerts" not in str(e).lower() or "not found" not in str(e).lower():
                 pass  # Silently ignore if table doesn't exist yet
+
+        # Poll for new dashboard queries from the backend
+        try:
+            with db_lock:
+                queries_sql = "SELECT query_id, name, sql, interval, chart_type, x_col, y_col, color_col FROM remote_db.rill_dashboard_queries"
+                query_rows = con.execute(queries_sql).fetchall()
+                if query_rows:
+                    for row in query_rows:
+                        q_id, q_name, q_sql, q_interval, q_chart_type, q_x_col, q_y_col, q_color_col = row
+                        if q_id not in scheduled_queries and q_id not in deleted_scheduled_queries:
+                            scheduled_queries[q_id] = {
+                                "sql": q_sql,
+                                "interval": q_interval,
+                                "last_run": 0
+                            }
+                            # Broadcast to the UI
+                            print(json.dumps({
+                                "type": "scheduled_query_sync",
+                                "queryId": q_id,
+                                "config": {
+                                    "queryId": q_id,
+                                    "name": q_name,
+                                    "sql": q_sql,
+                                    "intervalSeconds": q_interval,
+                                    "type": q_chart_type,
+                                    "xCol": q_x_col,
+                                    "yCol": q_y_col,
+                                    "colorCol": q_color_col
+                                }
+                            }), flush=True)
+        except Exception as e:
+            if "rill_dashboard_queries" not in str(e).lower() or "not found" not in str(e).lower():
+                pass
 
         # Handle scheduled queries
         now = time.time()
@@ -187,6 +222,7 @@ def stdin_loop(con):
                 with db_lock:
                     if query_id in scheduled_queries:
                         del scheduled_queries[query_id]
+                    deleted_scheduled_queries.add(query_id)
         except Exception as e:
             print(json.dumps({"error": f"Stdin loop error: {e}"}), flush=True)
 

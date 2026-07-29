@@ -13,7 +13,7 @@ from .table import RillTable
 from .connectors.base import BaseConnector
 from .compute.sql import ScheduledSQLTask, DuckDBBridge
 from .compute.join import TableJoinTask
-from .metrics import MetricsRegistry, create_alerts_table
+from .metrics import MetricsRegistry, create_alerts_table, create_dashboard_queries_table
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,9 @@ class RillEngine:
         else:
             self.metrics_db_path = metrics_db_path
         self.metrics_con = duckdb.connect(database=self.metrics_db_path)
-        self.metrics_con.execute("CREATE TABLE IF NOT EXISTS rill_metrics (ts DOUBLE, metric_name VARCHAR, value DOUBLE)")
+        self.metrics_con.execute("CREATE TABLE IF NOT EXISTS rill_metrics (ts VARCHAR, metric_name VARCHAR, value DOUBLE)")
         create_alerts_table(self.metrics_con)
+        create_dashboard_queries_table(self.metrics_con)
         self.metrics_ttl_seconds = metrics_ttl_seconds
 
         if memory_budget_mb is not None and memory_budget_bytes is None:
@@ -109,12 +110,13 @@ class RillEngine:
             self.tables[name] = table
             return table
 
-    def get_table(self, name: str) -> Optional[RillTable]:
-        """
-        Retrieves a registered RillTable by name.
-        """
-        with self._lock:
-            return self.tables.get(name)
+    # Commented out as we are not exposing live db tables currently
+    # def get_table(self, name: str) -> Optional[RillTable]:
+    #     """
+    #     Retrieves a registered RillTable by name.
+    #     """
+    #     with self._lock:
+    #         return self.tables.get(name)
 
     def get_or_create_table(
         self,
@@ -208,18 +210,20 @@ class RillEngine:
         table = self.get_or_create_table(table_name)
         table.subscribe(callback)
 
-    def register_business_metric(self, name: str, evaluator: Callable[['RillEngine'], Any]) -> None:
-        """
-        Registers a custom formula/metric to be calculated during each micro-batch tick.
-        """
-        self.metrics.register_metric(name, evaluator)
+    # Commented out as business metrics operate on live db tables
+    # def register_business_metric(self, name: str, evaluator: Callable[['RillEngine'], Any]) -> None:
+    #     """
+    #     Registers a custom formula/metric to be calculated during each micro-batch tick.
+    #     """
+    #     self.metrics.register_metric(name, evaluator)
 
-    def query_sql(self, sql: str) -> pa.Table:
-        """
-        Executes an ad-hoc DuckDB SQL query against any registered PyArrow tables.
-        Returns zero-copy PyArrow Table.
-        """
-        return self.duckdb.query(sql)
+    # Commented out as we are not exposing live db tables currently
+    # def query_sql(self, sql: str) -> pa.Table:
+    #     """
+    #     Executes an ad-hoc DuckDB SQL query against any registered PyArrow tables.
+    #     Returns zero-copy PyArrow Table.
+    #     """
+    #     return self.duckdb.query(sql)
 
     def get_metrics(self) -> Dict[str, Any]:
         """
@@ -266,6 +270,31 @@ class RillEngine:
     def error(self, message: str, detail: str = "") -> None:
         """Shortcut for push_alert with severity='error'."""
         self.push_alert(message, severity="error", detail=detail)
+
+    def add_dashboard_scheduled_query(
+        self,
+        name: str,
+        sql: str,
+        interval_seconds: float,
+        chart_type: str = "none",
+        x_col: str = "",
+        y_col: str = "",
+        color_col: str = ""
+    ) -> str:
+        """
+        Adds a scheduled query configuration to the dashboard.
+        Returns the generated query ID.
+        """
+        import uuid
+        import datetime
+        query_id = f"job-{str(uuid.uuid4())[:8]}"
+        now_ts = datetime.datetime.now().isoformat()
+        with self._lock:
+            self.metrics_con.execute(
+                "INSERT INTO rill_dashboard_queries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (query_id, name, sql, float(interval_seconds), chart_type, x_col, y_col, color_col, now_ts)
+            )
+        return query_id
 
     # ── Core Step Execution ──────────────────────────────────────────────
 
@@ -357,10 +386,11 @@ class RillEngine:
                 table_names = []
                 
                 # Also include metric tables in the catalog list
-                table_names.extend(["rill_metrics", "rill_alerts"])
-                for t in self.sql_tasks:
-                    if t.output_table:
-                        table_names.append(t.output_table)
+                table_names.extend(["rill_metrics", "rill_alerts", "rill_dashboard_queries"])
+                # Commented out as we are not exposing live db tables currently
+                # for t in self.sql_tasks:
+                #     if t.output_table:
+                #         table_names.append(t.output_table)
                 import re
                 def sanitize(n): return re.sub(r'\W+', '_', n).strip('_').lower()
                 for task_name in self.metrics.task_latencies.keys() if hasattr(self.metrics, 'task_latencies') else []:

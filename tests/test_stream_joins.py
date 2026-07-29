@@ -38,7 +38,7 @@ def test_table_join_task_without_aggregation():
     # Execute step
     engine.step()
 
-    enriched = engine.get_table("orders_enriched")
+    enriched = engine.tables.get("orders_enriched")
     assert enriched is not None
     assert enriched.num_rows == 2
     
@@ -79,7 +79,7 @@ def test_table_join_task_with_aggregation():
 
     engine.step()
 
-    summary = engine.get_table("region_summary")
+    summary = engine.tables.get("region_summary")
     assert summary is not None
     assert summary.num_rows == 2
 

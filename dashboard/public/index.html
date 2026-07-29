@@ -106,36 +106,14 @@
 
                 <!-- VIEW 1: METRICS CONSOLE -->
                 <div id="view-metrics" class="view-panel">
-                    <!-- SECTION 1: BUSINESS METRICS CENTERPIECE -->
-                    <div class="section-container business-spotlight">
+                    <!-- SECTION 1: SCHEDULED QUERY WIDGETS (Key Business Intelligence) -->
+                    <div class="section-container scheduled-spotlight" id="scheduled-widgets-container" style="display: none;">
                         <div class="section-title-bar">
-                            <h2>💎 Key Business Intelligence & Formulas</h2>
-                            <span class="section-tag">Live PyArrow Evaluated</span>
+                            <h2>💎 Key Business Intelligence & Scheduled Queries</h2>
+                            <span class="section-tag" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border-color: rgba(245, 158, 11, 0.3);">Live Streaming</span>
                         </div>
-
-                        <!-- Dynamic Business Cards Grid -->
-                        <div class="biz-cards-grid" id="business-cards-grid">
-                            <p class="no-data">Waiting for business metrics...</p>
-                        </div>
-
-                        <!-- Business Charts Row: Trend Line Chart & Histogram -->
-                        <div class="biz-charts-grid">
-                            <div class="card chart-card">
-                                <div class="chart-header">
-                                    <h2>📈 Business Metrics Trend (Line Plot)</h2>
-                                </div>
-                                <div class="chart-container">
-                                    <canvas id="business-trend-chart"></canvas>
-                                </div>
-                            </div>
-                            <div class="card chart-card">
-                                <div class="chart-header">
-                                    <h2>📊 Business Metrics Distribution (Histogram)</h2>
-                                </div>
-                                <div class="chart-container">
-                                    <canvas id="business-hist-chart"></canvas>
-                                </div>
-                            </div>
+                        <div id="scheduled-widgets-grid" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: stretch;">
+                            <!-- Live widgets appended here -->
                         </div>
                     </div>
 
@@ -229,16 +207,6 @@
                         </div>
                     </div>
 
-                    <!-- SECTION 3: SCHEDULED QUERY WIDGETS -->
-                    <div class="section-container scheduled-spotlight" id="scheduled-widgets-container" style="display: none;">
-                        <div class="section-title-bar">
-                            <h2>⏰ Scheduled Query Live Views</h2>
-                            <span class="section-tag" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border-color: rgba(245, 158, 11, 0.3);">Live Streaming</span>
-                        </div>
-                        <div id="scheduled-widgets-grid" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: stretch;">
-                            <!-- Live widgets appended here -->
-                        </div>
-                    </div>
                 </div>
                 
                 <!-- VIEW 4: CUSTOM QUERIES -->

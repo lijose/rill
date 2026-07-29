@@ -35,7 +35,7 @@ def test_engine_step_and_callbacks():
 
     assert len(callback_events) == 2
     assert callback_events[1] == ("events", 3)
-    assert engine.get_table("events").num_rows == 3
+    assert engine.tables.get("events").num_rows == 3
 
 
 def test_engine_start_stop_loop():
@@ -47,7 +47,7 @@ def test_engine_start_stop_loop():
     try:
         connector.push({"id": [10, 20]})
         time.sleep(0.15)
-        assert engine.get_table("live_tbl") is not None
-        assert engine.get_table("live_tbl").num_rows == 2
+        assert engine.tables.get("live_tbl") is not None
+        assert engine.tables.get("live_tbl").num_rows == 2
     finally:
         engine.stop()
