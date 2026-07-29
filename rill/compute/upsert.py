@@ -111,6 +111,20 @@ def upsert_table(
     elif not isinstance(new_table, pa.Table):
         raise TypeError(f"new_table must be pa.Table or pa.RecordBatch, got {type(new_table)}")
 
+    # Deduplicate intra-batch primary keys in new_table
+    if primary_key:
+        import duckdb
+        keys_list = [primary_key] if isinstance(primary_key, str) else list(primary_key)
+        partition_by = ", ".join(f'"{k}"' for k in keys_list)
+        try:
+            query = f"SELECT * EXCLUDE (_row_id) FROM (SELECT *, row_number() OVER () as _row_id FROM new_table) QUALIFY row_number() OVER (PARTITION BY {partition_by} ORDER BY _row_id DESC) = 1"
+            res = duckdb.sql(query).arrow()
+            if hasattr(res, "read_all"):
+                res = res.read_all()
+            new_table = res
+        except Exception:
+            pass
+
     # Ensure metadata columns exist and preserve z_insert_ts for updated rows
     old_table, new_table = _ensure_metadata_columns(new_table, old_table, primary_key, current_time)
 
@@ -135,12 +149,16 @@ def upsert_table(
 
     # If no primary_key is provided, standard append
     if not primary_key:
+        old_table = _decode_dictionary_columns(old_table)
+        new_table = _decode_dictionary_columns(new_table)
         return pa.concat_tables([old_table, new_table], promote_options=promote_options)
 
     # For composite keys (or if pc.is_in is not supported on struct type),
     # leverage C++ relational left anti join kernel (`old_table.join(new_table, keys=..., join_type="left anti")`)
     if isinstance(primary_key, (list, tuple)) and len(primary_key) > 1:
         surviving_table = old_table.join(new_table, keys=list(primary_key), join_type="left anti")
+        surviving_table = _decode_dictionary_columns(surviving_table)
+        new_table = _decode_dictionary_columns(new_table)
         return pa.concat_tables([surviving_table, new_table], promote_options=promote_options)
 
     # For single keys, use fast primitive compute kernel `pc.is_in`
@@ -161,4 +179,18 @@ def upsert_table(
         keys_list = [primary_key] if isinstance(primary_key, str) else list(primary_key)
         surviving_table = old_table.join(new_table, keys=keys_list, join_type="left anti")
 
+    surviving_table = _decode_dictionary_columns(surviving_table)
+    new_table = _decode_dictionary_columns(new_table)
     return pa.concat_tables([surviving_table, new_table], promote_options=promote_options)
+
+
+def _decode_dictionary_columns(table: pa.Table) -> pa.Table:
+    """
+    Decodes all dictionary-encoded columns in a table to their plain value types.
+    This prevents dictionary index alignment issues when concatenating tables
+    that were built with different dictionary value sets.
+    """
+    for i, field in enumerate(table.schema):
+        if pa.types.is_dictionary(field.type):
+            table = table.set_column(i, field.name, pc.dictionary_decode(table.column(i)))
+    return table

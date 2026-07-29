@@ -24,6 +24,7 @@ let alertRules = JSON.parse(localStorage.getItem('rill_alert_rules') || 'null') 
 ];
 
 let alertLogs = JSON.parse(localStorage.getItem('rill_alert_logs') || '[]');
+let alertLogFilter = 'all'; // 'all' | 'error' | 'warning' | 'user' | 'engine' | 'rule'
 let audioCtx = null;
 let knownBusinessKeys = new Set();
 
@@ -47,9 +48,11 @@ const tabAddBtn = document.getElementById('tab-add-btn');
 
 // Navigation & Views DOM
 const tabBtnMetrics = document.getElementById('tab-btn-metrics');
+const tabBtnQueries = document.getElementById('tab-btn-queries');
 const tabBtnAlertSettings = document.getElementById('tab-btn-alert-settings');
 const tabBtnAlertLogs = document.getElementById('tab-btn-alert-logs');
 const viewMetrics = document.getElementById('view-metrics');
+const viewQueries = document.getElementById('view-queries');
 const viewAlertSettings = document.getElementById('view-alert-settings');
 const viewAlertLogs = document.getElementById('view-alert-logs');
 const alertBadgeCount = document.getElementById('alert-badge-count');
@@ -67,6 +70,30 @@ const valRps = document.getElementById('val-rps');
 const valTotalRecords = document.getElementById('val-total-records');
 const valLatency = document.getElementById('val-latency');
 const valAvgLatency = document.getElementById('val-avg-latency');
+const valDuckdbLive = document.getElementById('val-duckdb-live');
+const valDuckdbMetrics = document.getElementById('val-duckdb-metrics');
+
+// Custom Queries DOM
+const sqlQueryEditor = document.getElementById('sql-query-editor');
+const runQueryBtn = document.getElementById('run-query-btn');
+const scheduleInterval = document.getElementById('schedule-interval');
+const scheduleQueryBtn = document.getElementById('schedule-query-btn');
+const queryErrorMsg = document.getElementById('query-error-msg');
+const queryElapsedTag = document.getElementById('query-elapsed-tag');
+const queryResultsThead = document.getElementById('query-results-thead');
+const queryResultsTbody = document.getElementById('query-results-tbody');
+const scheduledQueriesTbody = document.getElementById('scheduled-queries-tbody');
+
+// Custom Query Chart DOM
+const columnMappingPanel = document.getElementById('column-mapping-panel');
+const queryChartType = document.getElementById('query-chart-type');
+const queryXCol = document.getElementById('query-x-col');
+const queryYCol = document.getElementById('query-y-col');
+const queryColorCol = document.getElementById('query-color-col');
+const queryRenderChartBtn = document.getElementById('query-render-chart-btn');
+const queryChartCard = document.getElementById('query-chart-card');
+let customQueryChart = null;
+let lastQueryResult = null;
 
 // Business DOM & Controls
 const businessCardsGrid = document.getElementById('business-cards-grid');
@@ -170,6 +197,8 @@ function initWebSocket() {
                     latency: Number(data.last_batch_latency_ms || 0),
                     avgLatency: Number(data.avg_batch_latency_ms || 0),
                     rps: Number(data.records_per_second || 0),
+                    duckdbLive: Number(data.duckdb_live_bytes || 0),
+                    duckdbMetrics: Number(data.duckdb_metrics_bytes || 0),
                     businessMetrics: businessMetrics
                 };
 
@@ -189,6 +218,15 @@ function initWebSocket() {
                     updateDashboardUI(latestRecord);
                     updateChartUI();
                 }
+            } else if (payload.type === 'engine_alerts') {
+                // Server-side engine/user alerts from rill_alerts table
+                handleEngineAlerts(payload.data, connObj);
+            } else if (payload.type === 'query_result') {
+                if (activeConnectionId !== tabId) return;
+                renderQueryResults(payload);
+            } else if (payload.type === 'scheduled_result') {
+                if (activeConnectionId !== tabId) return;
+                updateScheduledQueryResult(payload);
             }
         } catch (err) {
             console.error("Error processing WebSocket message:", err);
@@ -343,6 +381,11 @@ function updateDashboardUI(latest) {
 
     valLatency.innerText = `${latest.latency.toFixed(2)} ms`;
     valAvgLatency.innerText = `Avg: ${latest.avgLatency.toFixed(2)} ms`;
+    
+    if (valDuckdbLive && valDuckdbMetrics) {
+        valDuckdbLive.innerText = `Live: ${formatBytes(latest.duckdbLive)}`;
+        valDuckdbMetrics.innerText = `Metrics: ${formatBytes(latest.duckdbMetrics)}`;
+    }
 
     // 2. Business Centerpiece Cards
     businessCardsGrid.innerHTML = '';
@@ -641,7 +684,7 @@ function switchDashboardView(viewName) {
     currentView = viewName;
 
     // Update nav tab buttons
-    [tabBtnMetrics, tabBtnAlertSettings, tabBtnAlertLogs].forEach(btn => {
+    [tabBtnMetrics, tabBtnAlertSettings, tabBtnAlertLogs, tabBtnQueries].forEach(btn => {
         if (btn.dataset.view === viewName) {
             btn.classList.add('active');
         } else {
@@ -649,10 +692,10 @@ function switchDashboardView(viewName) {
         }
     });
 
-    // Toggle view panel visibility
-    viewMetrics.classList.add('hidden');
-    viewAlertSettings.classList.add('hidden');
-    viewAlertLogs.classList.add('hidden');
+    // Update view visibility
+    [viewMetrics, viewAlertSettings, viewAlertLogs, viewQueries].forEach(view => {
+        view.classList.add('hidden');
+    });
 
     if (viewName === 'metrics') {
         viewMetrics.classList.remove('hidden');
@@ -665,12 +708,15 @@ function switchDashboardView(viewName) {
         renderAlertLogs();
         // Clear active badge pulse
         alertBadgeCount.classList.remove('active-alert');
+    } else if (viewName === 'queries') {
+        viewQueries.classList.remove('hidden');
     }
 }
 
 tabBtnMetrics.addEventListener('click', () => switchDashboardView('metrics'));
 tabBtnAlertSettings.addEventListener('click', () => switchDashboardView('alert-settings'));
 tabBtnAlertLogs.addEventListener('click', () => switchDashboardView('alert-logs'));
+tabBtnQueries.addEventListener('click', () => switchDashboardView('queries'));
 
 /* ==========================================================================
    WEB AUDIO API SOUND SYNTHESIS ENGINE
@@ -832,9 +878,10 @@ testWebhookBtn.addEventListener('click', async () => {
 /* ==========================================================================
    ALERT EVALUATION ENGINE & TOAST NOTIFICATIONS
    ========================================================================== */
-function showToast(title, subtitle, statusBadgesHtml = '') {
+function showToast(title, subtitle, statusBadgesHtml = '', severity = '') {
     const toast = document.createElement('div');
     toast.className = 'alert-toast';
+    if (severity) toast.classList.add(`toast-${severity}`);
     toast.innerHTML = `
         <div class="toast-icon">🚨</div>
         <div class="toast-content">
@@ -926,6 +973,10 @@ async function evaluateAlerts(latestRecord, connObj) {
                 const logEntry = {
                     id: `${now}-${Math.random().toString(36).substring(2, 7)}`,
                     timestamp: now,
+                    severity: 'warning',
+                    sourceType: 'rule',
+                    source: `rule.${rule.metricField}`,
+                    isEngineAlert: false,
                     ruleCondition: `${rule.metricField} ${rule.operator} ${rule.threshold}`,
                     observedValue: formattedVal,
                     serverAddress: connObj.address,
@@ -979,6 +1030,262 @@ function saveAlertSettings() {
 
     localStorage.setItem('rill_alert_settings', JSON.stringify(alertSettings));
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    initWebSocket();
+    renderTabs();
+    selectTab(null);
+    renderAlertRules();
+    renderAlertLogs();
+    
+    // Add Query View Logic
+    tabBtnQueries.addEventListener('click', () => switchDashboardView('queries'));
+
+    function generateQueryId() {
+        return Date.now().toString() + Math.random().toString(36).substring(2);
+    }
+    
+    runQueryBtn.addEventListener('click', () => {
+        if (!activeConnectionId) return;
+        const sql = sqlQueryEditor.value.trim();
+        if (!sql) return;
+        
+        queryErrorMsg.style.display = 'none';
+        queryResultsTbody.innerHTML = '<tr><td class="empty-table">Executing query...</td></tr>';
+        
+        ws.send(JSON.stringify({
+            action: 'preview_query',
+            tabId: activeConnectionId,
+            queryId: 'preview_' + activeConnectionId,
+            sql: sql
+        }));
+    });
+    
+    scheduleQueryBtn.addEventListener('click', () => {
+        if (!activeConnectionId) return;
+        const sql = sqlQueryEditor.value.trim();
+        const interval = parseInt(scheduleInterval.value, 10);
+        if (!sql || interval <= 0 || isNaN(interval)) return;
+        
+        const qid = generateQueryId();
+        
+        ws.send(JSON.stringify({
+            action: 'schedule_query',
+            tabId: activeConnectionId,
+            queryId: qid,
+            sql: sql,
+            intervalSeconds: interval
+        }));
+        
+        // Add to UI immediately, it will update when result comes
+        const tr = document.createElement('tr');
+        tr.id = `sched-row-${qid}`;
+        tr.innerHTML = `
+            <td>${qid.substring(0, 8)}...</td>
+            <td title="${sql}">${sql.length > 30 ? sql.substring(0, 30) + '...' : sql}</td>
+            <td>${interval}s</td>
+            <td class="last-run">Pending</td>
+            <td class="last-result">Waiting...</td>
+            <td style="text-align: right;">
+                <button class="btn btn-secondary unschedule-btn" data-qid="${qid}">Stop</button>
+            </td>
+        `;
+        
+        const emptyRow = scheduledQueriesTbody.querySelector('.empty-table-row');
+        if (emptyRow) emptyRow.remove();
+        
+        scheduledQueriesTbody.appendChild(tr);
+        
+        tr.querySelector('.unschedule-btn').addEventListener('click', () => {
+            ws.send(JSON.stringify({
+                action: 'unschedule_query',
+                tabId: activeConnectionId,
+                queryId: qid
+            }));
+            tr.remove();
+            if (scheduledQueriesTbody.children.length === 0) {
+                scheduledQueriesTbody.innerHTML = '<tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>';
+            }
+        });
+    });
+    
+    window.renderQueryResults = function(payload) {
+        lastQueryResult = null;
+        if (payload.error) {
+            queryErrorMsg.innerText = payload.error;
+            queryErrorMsg.style.display = 'block';
+            queryResultsTbody.innerHTML = '<tr class="empty-table-row"><td class="empty-table">Query failed.</td></tr>';
+            columnMappingPanel.style.display = 'none';
+            queryChartCard.style.display = 'none';
+            return;
+        }
+        
+        queryElapsedTag.innerText = payload.elapsed_ms.toFixed(1) + ' ms';
+        
+        if (!payload.columns || payload.columns.length === 0) {
+            queryResultsThead.innerHTML = '<tr><th>Result</th></tr>';
+            queryResultsTbody.innerHTML = '<tr><td class="empty-table">Success.</td></tr>';
+            columnMappingPanel.style.display = 'none';
+            queryChartCard.style.display = 'none';
+            return;
+        }
+        
+        lastQueryResult = payload;
+        
+        let headerRow = '<tr>';
+        payload.columns.forEach(c => headerRow += `<th>${c}</th>`);
+        headerRow += '</tr>';
+        queryResultsThead.innerHTML = headerRow;
+        
+        if (!payload.rows || payload.rows.length === 0) {
+            queryResultsTbody.innerHTML = `<tr><td colspan="${payload.columns.length}" class="empty-table">No rows returned.</td></tr>`;
+            columnMappingPanel.style.display = 'none';
+            queryChartCard.style.display = 'none';
+            return;
+        }
+        
+        let bodyRows = '';
+        payload.rows.forEach(r => {
+            let rowHtml = '<tr>';
+            payload.columns.forEach(c => rowHtml += `<td>${r[c]}</td>`);
+            rowHtml += '</tr>';
+            bodyRows += rowHtml;
+        });
+        queryResultsTbody.innerHTML = bodyRows;
+        
+        // Setup column mapping
+        columnMappingPanel.style.display = 'block';
+        
+        let opts = '';
+        payload.columns.forEach(c => opts += `<option value="${c}">${c}</option>`);
+        queryXCol.innerHTML = opts;
+        queryYCol.innerHTML = opts;
+        queryColorCol.innerHTML = '<option value="">None</option>' + opts;
+        
+        // Auto-select defaults if possible
+        if (payload.columns.includes('ts')) queryXCol.value = 'ts';
+        if (payload.columns.includes('value')) queryYCol.value = 'value';
+        if (payload.columns.includes('metric_name')) queryColorCol.value = 'metric_name';
+    };
+    
+    queryRenderChartBtn.addEventListener('click', () => {
+        if (!lastQueryResult || !lastQueryResult.rows) return;
+        
+        const type = queryChartType.value;
+        if (type === 'none') {
+            queryChartCard.style.display = 'none';
+            return;
+        }
+        
+        const xCol = queryXCol.value;
+        const yCol = queryYCol.value;
+        const colorCol = queryColorCol.value;
+        
+        queryChartCard.style.display = 'block';
+        
+        const rows = lastQueryResult.rows;
+        let datasets = [];
+        
+        const palette = [
+            'var(--accent-teal)',
+            'var(--accent-indigo)',
+            'var(--accent-purple)',
+            'var(--accent-red)',
+            'var(--accent-yellow)',
+            '#2ECC71', '#3498DB', '#9B59B6', '#E74C3C', '#F1C40F'
+        ];
+        
+        if (colorCol) {
+            const groups = {};
+            rows.forEach(r => {
+                const groupVal = r[colorCol];
+                if (!groups[groupVal]) groups[groupVal] = [];
+                groups[groupVal].push(r);
+            });
+            
+            let colorIdx = 0;
+            for (const [gName, gRows] of Object.entries(groups)) {
+                // sort rows by X
+                gRows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+                
+                datasets.push({
+                    label: String(gName),
+                    data: gRows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
+                    borderColor: palette[colorIdx % palette.length],
+                    backgroundColor: palette[colorIdx % palette.length],
+                    borderWidth: 2,
+                    pointRadius: type === 'scatter' ? 4 : 2
+                });
+                colorIdx++;
+            }
+        } else {
+            rows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+            datasets.push({
+                label: yCol,
+                data: rows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
+                borderColor: palette[0],
+                backgroundColor: palette[0],
+                borderWidth: 2,
+                pointRadius: type === 'scatter' ? 4 : 2
+            });
+        }
+        
+        if (customQueryChart) {
+            customQueryChart.destroy();
+        }
+        
+        const ctx = document.getElementById('custom-query-chart').getContext('2d');
+        customQueryChart = new Chart(ctx, {
+            type: type === 'scatter' ? 'scatter' : (type === 'bar' ? 'bar' : 'line'),
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: false },
+                plugins: {
+                    legend: {
+                        labels: { color: 'var(--text)' },
+                        onClick: function(e, legendItem, legend) {
+                            const index = legendItem.datasetIndex;
+                            const ci = legend.chart;
+                            if (ci.isDatasetVisible(index)) {
+                                ci.hide(index);
+                                legendItem.hidden = true;
+                            } else {
+                                ci.show(index);
+                                legendItem.hidden = false;
+                            }
+                        }
+                    },
+                    zoom: {
+                        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+                        pan: { enabled: true, mode: 'x' }
+                    }
+                },
+                scales: {
+                    x: { type: 'linear', ticks: { color: 'var(--text-muted)' }, grid: { color: 'var(--border)' } },
+                    y: { ticks: { color: 'var(--text-muted)' }, grid: { color: 'var(--border)' } }
+                }
+            }
+        });
+    });
+
+    
+    window.updateScheduledQueryResult = function(payload) {
+        const tr = document.getElementById(`sched-row-${payload.queryId}`);
+        if (!tr) return;
+        
+        tr.querySelector('.last-run').innerText = formatTime(payload.ranAt / 1000);
+        
+        if (payload.error) {
+            tr.querySelector('.last-result').innerText = payload.error;
+            tr.querySelector('.last-result').style.color = 'var(--accent-red)';
+        } else {
+            tr.querySelector('.last-result').innerText = `Success (${payload.rows ? payload.rows.length : 0} rows, ${payload.elapsed_ms.toFixed(1)}ms)`;
+            tr.querySelector('.last-result').style.color = 'var(--accent-teal)';
+        }
+    };
+});
 
 alertSoundEnableToggle.addEventListener('change', saveAlertSettings);
 alertToneSelect.addEventListener('change', saveAlertSettings);
@@ -1090,29 +1397,145 @@ addRuleForm.addEventListener('submit', (e) => {
     ruleThresholdInput.value = '';
 });
 
+/* ==========================================================================
+   ENGINE / USER ALERTS HANDLER (from rill_alerts table)
+   ========================================================================== */
+function handleEngineAlerts(alertsData, connObj) {
+    if (!alertsData || alertsData.length === 0) return;
+
+    for (const alert of alertsData) {
+        const severity = alert.severity || 'info';
+        const source = alert.source || 'engine';
+        const sourceType = source === 'user' ? 'user' : (source.startsWith('engine.') || source.startsWith('compute.') || source.startsWith('metrics.') || source.startsWith('table.') ? 'engine' : 'engine');
+
+        const logEntry = {
+            id: `eng-${alert.ts}-${Math.random().toString(36).substring(2, 7)}`,
+            timestamp: alert.ts,
+            severity: severity,
+            sourceType: sourceType,
+            source: source,
+            ruleCondition: alert.message || 'Engine Alert',
+            observedValue: alert.detail ? alert.detail.substring(0, 200) : '',
+            serverAddress: connObj.address || '-',
+            soundStatus: 'N/A',
+            webhookStatus: 'N/A',
+            statusBadges: '',
+            isEngineAlert: true
+        };
+
+        alertLogs.unshift(logEntry);
+
+        // Toast for error and warning severity
+        if (severity === 'error' || severity === 'warning') {
+            const sourceLabel = sourceType === 'user' ? '👤 User Alert' : '⚙️ Engine';
+            const severityIcon = severity === 'error' ? '🔴' : '🟡';
+            showToast(
+                `${severityIcon} ${sourceLabel}: ${alert.message}`,
+                alert.detail ? `<code style="font-size:11px;color:var(--text-secondary)">${alert.detail.substring(0, 150)}</code>` : `Source: ${source}`,
+                `<span class="badge-severity ${severity}">${severity}</span> <span class="badge-source ${sourceType}">${sourceLabel}</span>`,
+                severity
+            );
+
+            // Play alert sound for errors
+            if (severity === 'error') {
+                playAlertSound(alertSettings.soundDuration, alertSettings.soundTone);
+            }
+        }
+    }
+
+    if (alertLogs.length > 500) alertLogs.length = 500;
+    localStorage.setItem('rill_alert_logs', JSON.stringify(alertLogs));
+    updateAlertLogsBadge();
+    if (currentView === 'alert-logs') {
+        renderAlertLogs();
+    }
+}
+
+function getSeverityBadgeHtml(severity) {
+    const icons = { error: '🔴', warning: '🟡', info: '🔵' };
+    return `<span class="badge-severity ${severity || 'info'}">${icons[severity] || '🔵'} ${severity || 'info'}</span>`;
+}
+
+function getSourceBadgeHtml(log) {
+    if (log.isEngineAlert) {
+        if (log.sourceType === 'user') {
+            return `<span class="badge-source user">👤 User</span>`;
+        }
+        return `<span class="badge-source engine">⚙️ Engine</span>`;
+    }
+    return `<span class="badge-source rule">⚡ Rule</span>`;
+}
+
 function renderAlertLogs() {
     alertLogsTbody.innerHTML = '';
-    if (alertLogs.length === 0) {
+
+    // Apply filter
+    let filtered = alertLogs;
+    if (alertLogFilter !== 'all') {
+        filtered = alertLogs.filter(log => {
+            if (alertLogFilter === 'error') return log.severity === 'error';
+            if (alertLogFilter === 'warning') return log.severity === 'warning';
+            if (alertLogFilter === 'user') return log.sourceType === 'user';
+            if (alertLogFilter === 'engine') return log.isEngineAlert && log.sourceType !== 'user';
+            if (alertLogFilter === 'rule') return !log.isEngineAlert;
+            return true;
+        });
+    }
+
+    if (filtered.length === 0) {
         alertLogsTbody.innerHTML = `
             <tr class="empty-table-row">
-                <td colspan="5" class="empty-table">No alerts triggered yet.</td>
+                <td colspan="7" class="empty-table">No alerts match the current filter.</td>
             </tr>
         `;
         return;
     }
 
-    alertLogs.forEach(log => {
+    filtered.forEach(log => {
         const tr = document.createElement('tr');
+        const severity = log.severity || (log.isEngineAlert ? 'info' : 'warning');
+        const severityBadge = getSeverityBadgeHtml(severity);
+        const sourceBadge = getSourceBadgeHtml(log);
+
+        let valueDetail = '';
+        if (log.isEngineAlert) {
+            valueDetail = log.observedValue
+                ? `<span class="alert-detail-text" title="${log.observedValue.replace(/"/g, '&quot;')}">${log.observedValue}</span>`
+                : '-';
+        } else {
+            valueDetail = `<code style="color: #f87171; font-weight:700;">${log.observedValue}</code>`;
+        }
+
+        let statusCol = '';
+        if (log.isEngineAlert) {
+            statusCol = `<span class="badge-status" style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);font-size:11px;">Logged</span>`;
+        } else {
+            statusCol = log.statusBadges || `<span class="badge-status played">🔊 ${log.soundStatus}</span>`;
+        }
+
         tr.innerHTML = `
             <td style="white-space: nowrap; font-family: monospace;">${formatTime(log.timestamp)}</td>
+            <td>${severityBadge}</td>
+            <td>${sourceBadge}</td>
             <td><strong>${log.ruleCondition}</strong></td>
-            <td><code style="color: #f87171; font-weight:700;">${log.observedValue}</code></td>
+            <td>${valueDetail}</td>
             <td style="color: var(--text-secondary);">${log.serverAddress}</td>
-            <td>${log.statusBadges || `<span class="badge-status played">🔊 ${log.soundStatus}</span>`}</td>
+            <td>${statusCol}</td>
         `;
         alertLogsTbody.appendChild(tr);
     });
 }
+
+// Alert filter bar click handlers
+document.getElementById('alert-filter-bar')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.alert-filter-btn');
+    if (!btn) return;
+    const filter = btn.dataset.filter;
+    alertLogFilter = filter || 'all';
+    document.querySelectorAll('.alert-filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderAlertLogs();
+});
 
 clearAlertLogsBtn.addEventListener('click', () => {
     alertLogs = [];

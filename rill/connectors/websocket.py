@@ -8,6 +8,9 @@ from typing import Optional
 import pyarrow as pa
 from .base import BaseConnector
 from .json_stream import JSONStreamConnector
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class WebSocketConnector(BaseConnector):
@@ -60,20 +63,24 @@ class WebSocketConnector(BaseConnector):
                 try:
                     async with websockets.connect(self.uri) as ws:
                         while self._running:
-                            message = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                            if isinstance(message, str):
-                                self._json_stream.push_bytes(message.encode('utf-8'))
-                            elif isinstance(message, (bytes, bytearray)):
-                                self._json_stream.push_bytes(message)
-                except Exception:
+                            try:
+                                message = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                                if isinstance(message, str):
+                                    self._json_stream.push_bytes(message.encode('utf-8'))
+                                elif isinstance(message, (bytes, bytearray)):
+                                    self._json_stream.push_bytes(message)
+                            except asyncio.TimeoutError:
+                                continue  # Idle socket, just poll again
+                except Exception as e:
                     # On disconnect or timeout, sleep briefly before reconnect
                     if self._running:
+                        logger.warning(f"WebSocket connection error: {e}")
                         await asyncio.sleep(1.0)
 
         try:
             asyncio.run(_async_listen())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("WebSocket background thread crashed")
 
     def read_batch(self) -> Optional[pa.Table]:
         """

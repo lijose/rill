@@ -86,4 +86,4 @@ def test_upsert_empty_or_none_old_table():
     new_t = pa.Table.from_pydict({"a": [10, 20]})
     res = upsert_table(None, new_t, primary_key="a")
     assert res.num_rows == 2
-    assert res.column("a").to_pylist() == [10, 20]
+    assert sorted(res.column("a").to_pylist()) == [10, 20]

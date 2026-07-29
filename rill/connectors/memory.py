@@ -7,6 +7,10 @@ import threading
 from typing import Union, List, Optional, Any, Dict
 import pyarrow as pa
 from .base import BaseConnector
+from collections import deque
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryConnector(BaseConnector):
@@ -25,7 +29,8 @@ class MemoryConnector(BaseConnector):
     ):
         super().__init__(target_table, max_buffer_records=max_buffer_records, on_overflow=on_overflow)
         self.schema = schema
-        self._buffer: List[pa.RecordBatch] = []
+        self._buffer: deque = deque()
+        self._total_rows: int = 0
         self._lock = threading.RLock()
 
     def _enforce_backpressure(self) -> None:
@@ -35,7 +40,7 @@ class MemoryConnector(BaseConnector):
         if self.max_buffer_records is None or self.max_buffer_records <= 0:
             return
 
-        total_rows = sum(b.num_rows for b in self._buffer)
+        total_rows = self._total_rows
         if total_rows <= self.max_buffer_records:
             return
 
@@ -48,18 +53,22 @@ class MemoryConnector(BaseConnector):
                 last_batch = self._buffer[-1]
                 if last_batch.num_rows <= excess:
                     excess -= last_batch.num_rows
+                    self._total_rows -= last_batch.num_rows
                     self._buffer.pop()
                 else:
                     self._buffer[-1] = last_batch.slice(0, last_batch.num_rows - excess)
+                    self._total_rows -= excess
                     excess = 0
         else:  # drop_oldest (default)
             while self._buffer and excess > 0:
                 first_batch = self._buffer[0]
                 if first_batch.num_rows <= excess:
                     excess -= first_batch.num_rows
-                    self._buffer.pop(0)
+                    self._total_rows -= first_batch.num_rows
+                    self._buffer.popleft()
                 else:
                     self._buffer[0] = first_batch.slice(excess, first_batch.num_rows - excess)
+                    self._total_rows -= excess
                     excess = 0
 
     def push(
@@ -76,19 +85,23 @@ class MemoryConnector(BaseConnector):
             if isinstance(data, pa.Table):
                 for batch in data.to_batches():
                     self._buffer.append(batch)
+                    self._total_rows += batch.num_rows
             elif isinstance(data, pa.RecordBatch):
                 self._buffer.append(data)
+                self._total_rows += data.num_rows
             elif isinstance(data, list):
                 if not data:
                     return
                 if isinstance(data[0], pa.RecordBatch):
                     self._buffer.extend(data)
+                    self._total_rows += sum(b.num_rows for b in data)
                 elif isinstance(data[0], dict):
                     # List of row dicts -> convert to column dict then pa.RecordBatch
                     keys = data[0].keys()
-                    col_dict = {k: [row[k] for row in data] for k in keys}
+                    col_dict = {k: [row.get(k, None) for row in data] for k in keys}
                     batch = pa.RecordBatch.from_pydict(col_dict, schema=self.schema)
                     self._buffer.append(batch)
+                    self._total_rows += batch.num_rows
                 else:
                     raise TypeError(f"Unsupported list item type: {type(data[0])}")
             elif isinstance(data, dict):
@@ -98,6 +111,7 @@ class MemoryConnector(BaseConnector):
                 except (pa.ArrowInvalid, KeyError, ValueError):
                     batch = pa.RecordBatch.from_pydict(data)
                 self._buffer.append(batch)
+                self._total_rows += batch.num_rows
             else:
                 raise TypeError(f"Unsupported push data type: {type(data)}")
 
@@ -112,6 +126,7 @@ class MemoryConnector(BaseConnector):
                 return None
             batches = list(self._buffer)
             self._buffer.clear()
+            self._total_rows = 0
 
         try:
             return pa.Table.from_batches(batches, schema=self.schema)

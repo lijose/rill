@@ -6,6 +6,8 @@ aggregated analytical tables in C++ memory.
 
 from typing import Union, List, Tuple, Optional, TYPE_CHECKING
 import pyarrow as pa
+import logging
+logger = logging.getLogger(__name__)
 from .operations import join_tables, aggregate_table
 
 if TYPE_CHECKING:
@@ -122,7 +124,7 @@ class TableJoinTask:
                 target.replace_state(final_table)
             return target.to_arrow()
         except Exception as e:
-            # Handle schema or join mismatches cleanly during ongoing stream initialization
+            logger.exception(f"Join task '{self.name}' failed (left='{self.left_table}', right='{self.right_table}')")
             return None
 
     def __repr__(self) -> str:

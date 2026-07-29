@@ -10,6 +10,9 @@ from typing import Optional, Union, List
 import pyarrow as pa
 import pyarrow.json as pajson
 from .base import BaseConnector
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class JSONStreamConnector(BaseConnector):
@@ -34,6 +37,7 @@ class JSONStreamConnector(BaseConnector):
         self._buffer = io.BytesIO()
         self._lock = threading.RLock()
         self._has_data = False
+        self._last_byte_was_newline = False
 
     def push_bytes(self, raw_bytes: Union[bytes, bytearray, str]) -> None:
         """
@@ -61,11 +65,13 @@ class JSONStreamConnector(BaseConnector):
                         # Clear old buffer bytes and keep new chunk if fitting
                         self._buffer = io.BytesIO()
                         self._has_data = False
+                        self._last_byte_was_newline = False
 
             # Ensure newline between appended chunks if NDJSON
-            if self._has_data and not self._buffer.getvalue().endswith(b'\n') and not raw_bytes.startswith(b'\n'):
+            if self._has_data and not self._last_byte_was_newline and not raw_bytes.startswith(b'\n'):
                 self._buffer.write(b'\n')
             self._buffer.write(raw_bytes)
+            self._last_byte_was_newline = raw_bytes.endswith(b'\n')
             self._has_data = True
 
     def read_batch(self) -> Optional[pa.Table]:

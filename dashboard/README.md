@@ -9,6 +9,7 @@ The Rill Dashboard is a modernized single-page application and Express/WebSocket
 ### 1. 🎛️ Multi-View Glassmorphic Navigation
 Once connected to one or more Quack servers (`quack:ip:port`), the dashboard unlocks a sleek top navigation switcher:
 - **`[📊 Metrics Console]`**: Displays live KPI metric cards, system resource gauges, memory progress bars, and interactive Chart.js time-series charts (`Last 30s` to `All stored`).
+- **`[🔍 Custom Queries]`**: A SQL query builder to run ad-hoc and scheduled queries against the engine's `rill_metrics` database, with on-the-fly chart mapping (Line, Bar, Scatter) via `chartjs-plugin-zoom`.
 - **`[⚙️ Alert Rules & Settings]`**: Houses acoustic sound controls, webhook endpoints, and dynamic trigger rules management.
 - **`[🔔 Alert Logs]`**: A live log table tracking historical alert triggers, complete with an animated notification badge counter.
 
@@ -83,7 +84,7 @@ Browser security policies (CORS) block frontend web applications from sending di
                    v                           v
 +-----------------------------------------------------------------+
 |              Express / WebSocket Bridge (server.js)             |
-|   + WebSocket <-> Quack TCP Socket (`quack_worker.py`)          |
+|   + WebSocket <-> Quack stdin/stdout (`quack_worker.py`)        |
 |   + POST /api/webhook/send (CORS Proxy -> Slack / Google Chat)  |
 +-----------------------------------------------------------------+
                    | TCP Socket (Native Quack)

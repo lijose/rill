@@ -4,13 +4,13 @@
 [![PyArrow](https://img.shields.io/badge/Powered%20by-PyArrow-orange.svg)](https://arrow.apache.org/)
 [![DuckDB](https://img.shields.io/badge/SQL%20Engine-DuckDB-yellow.svg)](https://duckdb.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![CI Status](https://github.com/lijose/rill/actions/workflows/tests.yml/badge.svg)](.github/workflows/tests.yml)
+
 
 **Rill** is a lightweight, single-node micro-batching engine designed for high-performance streaming analytics using pure **PyArrow** and zero-copy **DuckDB**.
 
 By bypassing traditional Python data structures and the Global Interpreter Lock (GIL) where possible, Rill ingests continuous event streams directly into C++ contiguous memory (`pyarrow.Table`). It leverages a scheduled processing trigger to buffer, join, aggregate, and query incoming data efficiently without the overhead of event-by-event Python loops.
 
-From raw data ingestion to complex multi-stream joins, aggregations, and scheduled SQL pipelines, every operation is strictly contained within C++ vectorized memory, making Rill the ideal zero-infrastructure solution for live data processing.
+From raw data ingestion to complex multi-stream joins, aggregations, scheduled SQL pipelines, and **structured alerting**, every operation is strictly contained within C++ vectorized memory, making Rill the ideal zero-infrastructure solution for live data processing.
 
 ---
 
@@ -33,9 +33,19 @@ From raw data ingestion to complex multi-stream joins, aggregations, and schedul
 │  ┌─────────────────────────────────────────────────────────────────────────────┐ │
 │  │                           Compute Transformations                           │ │
 │  │                                                                             │ │
-│  │ • Zero-Copy DuckDB Scheduled SQL Pipelines                                  │ │
+│  │ • Zero-Copy DuckDB Scheduled SQL Pipelines (Live Tables In-Memory)          │ │
 │  │ • Multi-Stream Relational Joins & Aggregations                              │ │
 │  │ • Vectorized TTL Pruning (Age / Row Count)                                  │ │
+│  └─────────────────────────────────┬───────────────────────────────────────────┘ │
+│                                    │                                             │
+│                                    ▼                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐ │
+│  │                      Persistent Metrics & Telemetry                         │ │
+│  │                                                                             │ │
+│  │ • Dual-Connection Topology: Writes business metrics & engine telemetry      │ │
+│  │   to an on-disk `rill_metrics.db` for isolated serving and dashboarding.    │ │
+│  │ • Structured Alerts Pipeline: Engine exceptions & user-pushed alerts        │ │
+│  │   written to `rill_alerts` table for dashboard visibility.                  │ │
 │  └─────────────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -76,6 +86,25 @@ Expose all internal Rill tables and real-time engine telemetry over native TCP/I
 ### 9. Dynamic Business Metrics & KPIs (`register_business_metric`)
 Register custom PyArrow analytical formulas (`engine.register_business_metric(name, formula_fn)`) that evaluate in real-time on every micro-batch tick. These metrics automatically calculate domain KPIs—such as maximum order tickets, cumulative revenue, and cancellation ratios—without writing ad-hoc polling loops.
 
+### 10. Structured Alerts & Observability Pipeline
+Rill includes a full-stack **alerts and observability pipeline** that captures engine exceptions, user-pushed alerts, and threshold-based rule triggers into a persistent `rill_alerts` DuckDB table — visible in real-time on the dashboard.
+
+- **Structured Logging**: Every module uses `logging.getLogger(__name__)` with proper Python logging. No silent `except: pass` blocks — all errors are logged and recorded.
+- **Server-Side Alert Recording**: All internal engine exceptions (connector failures, SQL task errors, memory budget warnings, business metric evaluation failures) are automatically recorded as structured alerts with severity (`error`, `warning`, `info`), source component, and traceback detail.
+- **User-Facing Alert API**: Push custom alerts directly from application code:
+  ```python
+  # Primary method with full control
+  engine.push_alert("Revenue dropped below threshold", severity="warning", detail="Current: $847")
+  engine.push_alert("Payment gateway timeout", severity="error", detail=traceback.format_exc())
+
+  # Convenience methods
+  engine.alert("Batch processed successfully")       # severity="info"
+  engine.warn("High latency detected on orders")     # severity="warning"
+  engine.error("Database connection failed")          # severity="error"
+  ```
+- **Dashboard Integration**: All alerts (engine, user, and rule-based) appear in the Alert Logs view with severity badges (🔴 Error, 🟡 Warning, 🔵 Info), source badges (👤 User, ⚙️ Engine, ⚡ Rule), filter toggles, and toast notifications.
+- **Automatic Retention**: Alerts older than 1 hour are automatically pruned during each metrics flush cycle.
+
 ---
 
 ## 📊 Live Business Intelligence & Quack Dashboard
@@ -109,14 +138,15 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 ```
 
 ### Dashboard Highlights:
-- **📊 Multi-View Glassmorphic Navigation**: Seamlessly switch between the **Metrics Console**, **Alert Rules & Settings**, and **Alert Logs** right from the top bar.
+- **📊 Multi-View Glassmorphic Navigation**: Seamlessly switch between the **Metrics Console**, **Custom Queries**, **Alert Rules & Settings**, and **Alert Logs** right from the top bar.
 - **💎 Business Intelligence Centerpiece**: Prominently displays custom KPIs (`max_order_amount`, `total_revenue`, `cancelled_ratio`) and evaluates live PyArrow formulas on every tick.
-- **Interactive Business & System Charts**: Includes a real-time **Line Chart** plotting numerical KPI trends over time, alongside a **Histogram / Bar Chart** comparing snapshot distributions across formulas.
-- **⚙️ Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, throughput (RPS), and step latency into a dedicated secondary monitoring section.
+- **🔍 Custom SQL Queries & Chart Mapping**: Write, execute, and schedule ad-hoc SQL queries against the on-disk `rill_metrics` database. Map query results on the fly to **Interactive Line, Bar, and Scatter Charts** with zoom/pan capabilities powered by `chartjs-plugin-zoom`.
+- **⚙️ Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, DuckDB storage size (`Live` vs `Metrics` DB), throughput (RPS), and step latency into a dedicated secondary monitoring section.
+- **🔔 Unified Alert Logs**: Displays engine-side exceptions, user-pushed alerts, and threshold rule triggers in a single unified view with **severity badges** (🔴🟡🔵), **source badges** (👤 User / ⚙️ Engine / ⚡ Rule), **filter toggles** (All / Errors / Warnings / User / Engine / Rules), and severity-colored **toast notifications** for real-time visibility.
 - **🔊 Browser-Native Sound Alerts**: Real-time Web Audio API acoustic engine with selectable tones (`Classic Beep`, `Warning Siren`, `Gentle Chime`, `Urgent Buzzer`), customizable duration sliders (1s–30s), and instant sound preview.
 - **⚪ Offline / Disconnected Grey Tabs**: Multi-tab connection bar with automatic health tracking. If a remote Quack server drops connection or exits, its tab instantly turns grey with a grey status dot and hover failure details.
 - **🔗 Server-Side Webhook Relay (`POST /api/webhook/send`)**: Bypasses browser CORS restrictions by routing real-time alert notifications directly to **Slack Incoming Webhooks**, **Google Chat / Google Meet Cards**, or **Custom JSON endpoints**.
-- **🔔 Real-Time Alert Evaluation & History Logs**: Evaluates custom trigger rules (`>`, `>=`, `<`, `<=`, `==`) with cooldown protection and logs every fired event (`#view-alert-logs`) with audio/webhook status badges. All rules and settings persist automatically in `localStorage`.
+- **⚡ Real-Time Threshold Rule Engine**: Evaluates custom trigger rules (`>`, `>=`, `<`, `<=`, `==`) on system and business metrics with cooldown protection. Rules and settings persist automatically in `localStorage`.
 
 ---
 
@@ -160,7 +190,12 @@ import pyarrow.compute as pc
 from rill import RillEngine, MemoryConnector, ScheduledSQLTask, RetentionPolicy, schema
 
 # 1. Initialize Rill Engine with a 200ms micro-batch interval and 500 MB memory budget
-engine = RillEngine(trigger_interval_ms=200, memory_budget_mb=500.0)
+engine = RillEngine(
+    trigger_interval_ms=200, 
+    memory_budget_mb=500.0,
+    quack_address="quack:0.0.0.0:9494", 
+    quack_token="secret_token"
+)
 
 # 2. Define schema with primary key and register table
 orders_schema = schema([
@@ -194,7 +229,7 @@ sql_task = ScheduledSQLTask(
 engine.add_sql_task(sql_task)
 
 # 6. Start engine and Quack server (`quack:0.0.0.0:9494`)
-engine.start(quack_port=9494, quack_token="secret_token")
+engine.start()
 
 # Push incoming events directly to connector
 batch = pa.RecordBatch.from_pydict({
@@ -209,9 +244,60 @@ time.sleep(1.2)
 # Retrieve finalized zero-copy C++ PyArrow tables and business metrics
 revenue_summary = engine.get_table("revenue_by_tier").to_arrow()
 print("Live Revenue Summary:\n", revenue_summary.to_pandas())
-print("Live Business Metrics:", engine.evaluate_business_metrics())
+print("Live Business Metrics:", engine.get_metrics())
 
 engine.stop()
+```
+
+---
+
+### 3. Alerts & Observability
+
+```python
+from rill import RillEngine, MemoryConnector
+import traceback
+
+engine = RillEngine(
+    trigger_interval_ms=200,
+    quack_address="quack:0.0.0.0:9494"
+)
+
+engine.register_table("orders", primary_key="order_id")
+connector = MemoryConnector(target_table="orders")
+engine.add_connector(connector)
+
+# Push custom alerts from your application code
+engine.alert("Engine started successfully")           # info severity
+engine.warn("Order queue backlog exceeds threshold")   # warning severity
+
+try:
+    # Your business logic here
+    result = process_payment(order)
+except Exception:
+    engine.error("Payment processing failed", detail=traceback.format_exc())
+
+# Alerts with full control
+engine.push_alert(
+    "Revenue dropped below $1,000",
+    severity="warning",
+    detail="Current daily revenue: $847.23. Threshold: $1,000."
+)
+
+engine.start()
+# Engine exceptions (connector failures, SQL errors, memory warnings) are
+# automatically recorded as alerts — no extra code needed.
+# All alerts appear in the dashboard Alert Logs view.
+```
+
+Alerts are stored in the `rill_alerts` DuckDB table and can also be queried directly:
+
+```python
+results = engine.metrics_con.execute("""
+    SELECT ts, severity, source, message 
+    FROM rill_alerts 
+    WHERE severity = 'error' 
+    ORDER BY ts DESC LIMIT 10
+""").fetchall()
 ```
 
 ---
@@ -232,11 +318,26 @@ This demo illustrates:
 
 ## 🧪 Running Tests
 
-Rill is verified by a thorough unit and integration test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, and zero-copy joins:
+Rill is verified by a comprehensive test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, zero-copy joins, alerts pipeline, bug regression tests, and connector edge cases:
 
 ```bash
 pytest tests/ -v
 ```
+
+Test coverage includes:
+- **`test_alerts_pipeline.py`** — Alert recording, DuckDB persistence, user API (`push_alert`, `alert`, `warn`, `error`), connector error alert generation, alert retention
+- **`test_bug_fixes.py`** — Import sanity, connector edge cases (inconsistent rows, empty pushes, deque buffers), O(N²) buffer fix, streaming JSON export, resource cleanup
+- **`test_engine.py`** — Step execution, callbacks, start/stop lifecycle
+- **`test_connectors.py`** — Memory, JSON stream, and file connectors
+- **`test_backpressure.py`** — Bounded buffer overflow strategies
+- **`test_duckdb_sql.py`** — Zero-copy queries, scheduled SQL tasks
+- **`test_stream_joins.py`** — Multi-stream join tasks with and without aggregation
+- **`test_schema.py`** — Schema enrichment, primary key extraction, row size estimation
+- **`test_retention.py`** — Max rows and max age TTL pruning
+- **`test_table_modes.py`** — Snapshot vs append mode behavior
+- **`test_upsert.py`** — Single/composite primary key upserts, append mode
+- **`test_metrics.py`** — System and business metrics tracking
+- **`test_memory_budget.py`** — Memory budget warnings and callbacks
 
 ---
 

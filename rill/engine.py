@@ -3,18 +3,19 @@ RillEngine: Core micro-batch compute coordinator and scheduling trigger.
 """
 
 import time
+import logging
 import threading
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Union, Any, Tuple, TYPE_CHECKING
 import pyarrow as pa
 from .table import RillTable
 from .connectors.base import BaseConnector
 from .compute.sql import ScheduledSQLTask, DuckDBBridge
-from .metrics import MetricsRegistry
-# from .checkpoint import Checkpointer  # will add later
-if TYPE_CHECKING:
-    from .retention import RetentionPolicy
-    from .compute.join import TableJoinTask
+from .compute.join import TableJoinTask
+from .metrics import MetricsRegistry, create_alerts_table
+
+logger = logging.getLogger(__name__)
 
 
 class RillEngine:
@@ -28,7 +29,7 @@ class RillEngine:
     def __init__(
         self,
         trigger_interval_ms: float = 100.0,
-        duckdb_connection=None,
+        duckdb_connection: Optional[Any] = None,
         checkpoint_dir: Optional[Union[str, Path]] = None,
         checkpoint_interval_seconds: float = 60.0,
         memory_budget_bytes: Optional[int] = None,
@@ -36,7 +37,8 @@ class RillEngine:
         on_memory_warning: Optional[Callable[[int, int], None]] = None,
         quack_address: Optional[str] = None,
         quack_token: Optional[str] = None,
-        auto_compact_chunks: int = 32
+        auto_compact_chunks: int = 32,
+        metrics_db_path: Optional[str] = None
     ):
         """
         Args:
@@ -50,6 +52,7 @@ class RillEngine:
             quack_address: Optional Quack protocol address to serve DuckDB remotely (e.g. 'quack:0.0.0.0:9494').
             quack_token: Optional security token for authentication of remote Quack clients.
             auto_compact_chunks: Threshold chunk count for automatic de-fragmentation during step (default: 32).
+            metrics_db_path: File path for the metrics DuckDB database. Defaults to 'rill_metrics.db' in CWD.
         """
         self.trigger_interval_ms = trigger_interval_ms
         self.auto_compact_chunks = auto_compact_chunks
@@ -59,11 +62,13 @@ class RillEngine:
         self.join_tasks: List['TableJoinTask'] = []
         self.metrics = MetricsRegistry()
         self.duckdb = DuckDBBridge(self, connection=duckdb_connection)
-        # self.checkpointer: Optional[Checkpointer] = (
-        #     Checkpointer(checkpoint_dir, interval_seconds=checkpoint_interval_seconds)
-        #     if checkpoint_dir is not None else None
-        # )
-        self.checkpointer = None  # will add later
+        
+        # Initialize metrics database (metrics_con)
+        import duckdb
+        self.metrics_db_path = metrics_db_path or "rill_metrics.db"
+        self.metrics_con = duckdb.connect(database=self.metrics_db_path)
+        self.metrics_con.execute("CREATE TABLE IF NOT EXISTS rill_metrics (ts DOUBLE, metric_name VARCHAR, value DOUBLE)")
+        create_alerts_table(self.metrics_con)
 
         if memory_budget_mb is not None and memory_budget_bytes is None:
             memory_budget_bytes = int(memory_budget_mb * 1024 * 1024)
@@ -128,7 +133,7 @@ class RillEngine:
                 try:
                     tbl.compact(max_chunks=threshold)
                 except Exception:
-                    pass
+                    logger.exception(f"Error compacting table {tbl.name}")
 
     def add_connector(self, connector: BaseConnector) -> None:
         """
@@ -185,11 +190,6 @@ class RillEngine:
         """
         Restores table states from the configured `checkpoint_dir` if present.
         """
-        # with self._lock:
-        #     if self.checkpointer is not None:
-        #         return self.checkpointer.restore_snapshots(self)
-        #     return []
-        # will add later
         return []
 
     def subscribe(self, table_name: str, callback: Callable[[str, pa.Table], None]) -> None:
@@ -218,6 +218,48 @@ class RillEngine:
         """
         return self.metrics.get_all_metrics(self)
 
+    # ── User-Facing Alert API ────────────────────────────────────────────
+
+    def push_alert(
+        self,
+        message: str,
+        severity: str = "info",
+        detail: str = ""
+    ) -> None:
+        """
+        Push a custom alert from user application code.
+        Alerts are stored in the metrics database and visible in the dashboard.
+
+        Args:
+            message: Short human-readable alert message.
+            severity: Alert level — "info", "warning", or "error".
+            detail: Optional extended context, traceback, or description.
+
+        Example:
+            engine.push_alert("Revenue dropped below threshold", severity="warning")
+            engine.push_alert("Payment gateway timeout", severity="error", detail=traceback.format_exc())
+        """
+        self.metrics.record_alert(
+            severity=severity,
+            source="user",
+            message=message,
+            detail=detail
+        )
+
+    def alert(self, message: str, detail: str = "") -> None:
+        """Shortcut for push_alert with severity='info'."""
+        self.push_alert(message, severity="info", detail=detail)
+
+    def warn(self, message: str, detail: str = "") -> None:
+        """Shortcut for push_alert with severity='warning'."""
+        self.push_alert(message, severity="warning", detail=detail)
+
+    def error(self, message: str, detail: str = "") -> None:
+        """Shortcut for push_alert with severity='error'."""
+        self.push_alert(message, severity="error", detail=detail)
+
+    # ── Core Step Execution ──────────────────────────────────────────────
+
     def step(self) -> float:
         """
         Executes a single synchronous micro-batch iteration:
@@ -237,18 +279,29 @@ class RillEngine:
             connectors_snapshot = list(self.connectors)
             for connector in connectors_snapshot:
                 try:
+                    conn_t0 = time.perf_counter()
                     batch_or_table = connector.read_batch()
+                    conn_records = 0
                     if batch_or_table is not None:
                         table = self.get_or_create_table(connector.target_table)
                         table.upsert(batch_or_table)
 
                         if isinstance(batch_or_table, list):
-                            records_in_step += sum(b.num_rows for b in batch_or_table)
+                            conn_records = sum(b.num_rows for b in batch_or_table)
                         else:
-                            records_in_step += batch_or_table.num_rows
+                            conn_records = batch_or_table.num_rows
+                        records_in_step += conn_records
+                    
+                    conn_t1 = time.perf_counter()
+                    self.metrics.record_connector_step(connector.target_table, conn_records, conn_t1 - conn_t0)
                 except Exception as e:
-                    # Log or handle connector ingestion errors without breaking step loop
-                    pass
+                    logger.exception(f"Error in connector ingestion for table {connector.target_table}")
+                    self.metrics.record_alert(
+                        severity="error",
+                        source=f"engine.connector.{connector.target_table}",
+                        message=f"Connector ingestion error for table '{connector.target_table}': {e}",
+                        detail=traceback.format_exc()
+                    )
 
             # 2. Scheduled DuckDB SQL tasks
             self.duckdb.run_due_tasks(t0)
@@ -256,9 +309,19 @@ class RillEngine:
             # 3. Continuous Multi-stream Table Join tasks
             for jtask in self.join_tasks:
                 try:
+                    j_t0 = time.perf_counter()
                     jtask.execute(self)
-                except Exception:
-                    pass
+                    j_t1 = time.perf_counter()
+                    self.metrics.record_task_latency(jtask.name if hasattr(jtask, 'name') else 'join_task', (j_t1 - j_t0) * 1000.0)
+                except Exception as e:
+                    logger.exception(f"Error in table join task")
+                    task_name = jtask.name if hasattr(jtask, 'name') else 'unknown'
+                    self.metrics.record_alert(
+                        severity="error",
+                        source=f"compute.join_task.{task_name}",
+                        message=f"Join task '{task_name}' failed: {e}",
+                        detail=traceback.format_exc()
+                    )
 
             # 4. Enforce optional TTL retention and compaction on tables
             now_ts = time.time()
@@ -267,18 +330,20 @@ class RillEngine:
                     tbl.apply_retention(current_time=now_ts)
                     if self.auto_compact_chunks > 0:
                         tbl.compact(max_chunks=self.auto_compact_chunks)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception(f"Error in retention/compaction for table {tbl.name}")
+                    self.metrics.record_alert(
+                        severity="warning",
+                        source=f"engine.retention.{tbl.name}",
+                        message=f"Retention/compaction error for table '{tbl.name}': {e}",
+                        detail=traceback.format_exc()
+                    )
 
-            # 5. Live business logic evaluation
+            # 5. Live business logic evaluation and metrics publishing
             self.metrics.evaluate_business_metrics(self)
+            self.metrics.write_to_duckdb(self.metrics_con, self)
 
-            # 6. Periodic checkpointing
-            # if self.checkpointer is not None and self.checkpointer.is_due(t0):
-            #     self.checkpointer.save_snapshots(self, current_time=t0)
-            # will add later
-
-            # 7. Check PyArrow memory budget
+            # 6. Check PyArrow memory budget
             self.check_memory_budget()
 
         t1 = time.perf_counter()
@@ -305,11 +370,22 @@ class RillEngine:
                 f"({self.memory_budget_bytes / 1024 / 1024:.2f} MB)"
             )
             warnings.warn(msg, ResourceWarning, stacklevel=2)
+            self.metrics.record_alert(
+                severity="warning",
+                source="engine.memory_budget",
+                message=msg
+            )
             if self.on_memory_warning is not None:
                 try:
                     self.on_memory_warning(allocated, self.memory_budget_bytes)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception("Error in on_memory_warning callback")
+                    self.metrics.record_alert(
+                        severity="error",
+                        source="engine.memory_budget",
+                        message=f"on_memory_warning callback failed: {e}",
+                        detail=traceback.format_exc()
+                    )
 
         return allocated, self.memory_budget_bytes, exceeded
 
@@ -322,10 +398,6 @@ class RillEngine:
             if self._running:
                 return
             self._running = True
-
-            # if self.checkpointer is not None:
-            #     self.checkpointer.restore_snapshots(self)
-            # will add later
 
             for connector in self.connectors:
                 connector.start()
@@ -356,15 +428,12 @@ class RillEngine:
 
         if self._quack_thread is not None:
             if self._quack_thread.is_alive():
-                import duckdb
-                db_name = getattr(self.duckdb, 'db_name', None) or ':memory:'
                 try:
-                    # Signal the Quack server to stop
-                    stop_con = duckdb.connect(database=db_name)
-                    stop_con.execute("LOAD quack;")
-                    stop_con.execute(f"CALL quack_stop('{self.quack_address}');")
+                    # Signal the Quack server to stop via the metrics connection
+                    self.metrics_con.execute("LOAD quack;")
+                    self.metrics_con.execute("CALL quack_stop(?);", [self.quack_address])
                 except Exception:
-                    pass
+                    logger.exception("Error stopping quack server")
                 self._quack_thread.join(timeout=timeout)
             self._quack_thread = None
 
@@ -372,14 +441,17 @@ class RillEngine:
             for connector in self.connectors:
                 connector.stop()
 
+        # Close the metrics database connection to prevent resource leaks
+        try:
+            self.metrics_con.close()
+        except Exception:
+            logger.exception("Error closing metrics_con")
+
     def _run_quack_server(self) -> None:
         """
-        Runs the DuckDB Quack server in a background thread.
+        Runs the DuckDB Quack server in a background thread against the metrics DB.
         """
-        import duckdb
-
-        db_name = getattr(self.duckdb, 'db_name', None) or ':memory:'
-        con = duckdb.connect(database=db_name)
+        con = self.metrics_con
 
         try:
             con.execute("INSTALL quack;")
@@ -395,19 +467,21 @@ class RillEngine:
         try:
             con.execute("LOAD quack;")
         except Exception as e:
-            print(f"[Rill Quack Server] Error loading quack extension: {e}")
+            logger.error(f"[Rill Quack Server] Error loading quack extension: {e}")
             return
 
         try:
             if self.quack_token:
-                res = con.execute(f"CALL quack_serve('{self.quack_address}', token='{self.quack_token}', allow_other_hostname => true);").fetchone()
+                res = con.execute("CALL quack_serve(?, token=?, allow_other_hostname => true);", [self.quack_address, self.quack_token]).fetchone()
             else:
-                res = con.execute(f"CALL quack_serve('{self.quack_address}', allow_other_hostname => true);").fetchone()
+                res = con.execute("CALL quack_serve(?, allow_other_hostname => true);", [self.quack_address]).fetchone()
             if res and len(res) >= 3 and not self.quack_token:
                 self.quack_token = str(res[2])
             token_display = f" | Auth Token: {self.quack_token}" if self.quack_token else ""
+            logger.info(f"[Rill Quack Server] Active at {res[0] if res else self.quack_address}{token_display}")
             print(f"[Rill Quack Server] Active at {res[0] if res else self.quack_address}{token_display}")
         except Exception as e:
+            logger.error(f"[Rill Quack Server] Error serving at {self.quack_address}: {e}")
             print(f"[Rill Quack Server] Error serving at {self.quack_address}: {e}")
 
     def _run_loop(self) -> None:

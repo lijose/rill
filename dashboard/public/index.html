@@ -10,6 +10,8 @@
     <link rel="icon" type="image/png" href="logo.png">
     <link rel="stylesheet" href="index.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
 </head>
 <body>
     <!-- Floating Alert Toast Container -->
@@ -63,6 +65,9 @@
                 <div class="dashboard-nav-tabs">
                     <button class="nav-tab-btn active" id="tab-btn-metrics" data-view="metrics">
                         <span>📊</span> Metrics Console
+                    </button>
+                    <button class="nav-tab-btn" id="tab-btn-queries" data-view="queries">
+                        <span>🔍</span> Custom Queries
                     </button>
                     <button class="nav-tab-btn" id="tab-btn-alert-settings" data-view="alert-settings">
                         <span>⚙️</span> Alert Rules & Settings
@@ -172,6 +177,16 @@
                                 <div class="metric-value" id="val-pyarrow">0.00 MB</div>
                                 <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
                             </div>
+                            
+                            <!-- DuckDB Memory CARD -->
+                            <div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">DuckDB In-Memory Storage</span>
+                                    <span class="metric-icon">🦆</span>
+                                </div>
+                                <div class="metric-value" id="val-duckdb-live">Live: 0.00 MB</div>
+                                <div class="metric-subtext" id="val-duckdb-metrics">Metrics: 0.00 MB</div>
+                            </div>
 
                             <!-- Throughput CARD -->
                             <div class="card metric-card">
@@ -206,6 +221,123 @@
                             <div class="chart-container">
                                 <canvas id="resource-chart"></canvas>
                             </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- VIEW 4: CUSTOM QUERIES -->
+                <div id="view-queries" class="view-panel hidden">
+                    <div class="card query-builder-card">
+                        <div class="section-title-bar">
+                            <h2>🔍 Custom SQL Query Runner</h2>
+                            <span class="section-tag">DuckDB Metrics Database</span>
+                        </div>
+                        <p class="settings-description">Write and execute DuckDB SQL queries against the <code>rill_metrics</code> table or engine metadata. Allowed prefixes: SELECT, WITH, EXPLAIN, PRAGMA show_tables, DESCRIBE.</p>
+                        
+                        <div class="saved-queries-toolbar" style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
+                            <label style="font-size: 12px; font-weight: 600;">Saved Queries:</label>
+                            <select id="saved-queries-select" class="select-control" style="flex: 1; padding: 6px;">
+                                <option value="">-- Select a saved query --</option>
+                            </select>
+                            <button id="save-query-btn" class="btn btn-secondary" style="padding: 6px 12px;">Save Current</button>
+                            <button id="delete-query-btn" class="btn btn-secondary" style="padding: 6px 12px;">Delete</button>
+                        </div>
+
+                        <div class="query-editor-container">
+                            <textarea id="sql-query-editor" class="text-input full-width" rows="6" placeholder="SELECT * FROM rill_metrics ORDER BY ts DESC LIMIT 10;"></textarea>
+                        </div>
+                        
+                        <div class="query-actions" style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
+                            <button id="run-query-btn" class="btn btn-primary">▶ Run Query</button>
+                            
+                            <div class="schedule-group" style="display: flex; gap: 10px; align-items: center; border-left: 1px solid var(--border); padding-left: 15px;">
+                                <label for="schedule-interval">Interval (s):</label>
+                                <input type="number" id="schedule-interval" min="1" value="5" class="number-input" style="width: 70px;">
+                                <button id="schedule-query-btn" class="btn btn-secondary">⏰ Schedule Query</button>
+                            </div>
+                        </div>
+                        <div id="query-error-msg" class="error-msg" style="margin-top: 10px; display: none;"></div>
+
+                        <div class="column-mapping-panel" id="column-mapping-panel" style="display: none; margin-top: 15px; padding: 15px; background: var(--bg-alt); border: 1px solid var(--border); border-radius: var(--radius-md);">
+                            <h3 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600; color: var(--text);">Chart Mapping</h3>
+                            <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                                <div class="input-group" style="margin: 0; min-width: 150px;">
+                                    <label style="font-size: 11px;">Chart Type</label>
+                                    <select id="query-chart-type" class="select-control full-width" style="padding: 6px;">
+                                        <option value="none">Data Table Only</option>
+                                        <option value="line">Line Chart</option>
+                                        <option value="bar">Bar Chart</option>
+                                        <option value="scatter">Scatter Plot</option>
+                                    </select>
+                                </div>
+                                <div class="input-group" style="margin: 0; min-width: 150px;">
+                                    <label style="font-size: 11px;">X-Axis Column</label>
+                                    <select id="query-x-col" class="select-control full-width" style="padding: 6px;"></select>
+                                </div>
+                                <div class="input-group" style="margin: 0; min-width: 150px;">
+                                    <label style="font-size: 11px;">Y-Axis Column(s)</label>
+                                    <select id="query-y-col" class="select-control full-width" style="padding: 6px;"></select>
+                                </div>
+                                <div class="input-group" style="margin: 0; min-width: 150px;">
+                                    <label style="font-size: 11px;">Color / Group By (Optional)</label>
+                                    <select id="query-color-col" class="select-control full-width" style="padding: 6px;">
+                                        <option value="">None</option>
+                                    </select>
+                                </div>
+                                <div style="margin-top: auto;">
+                                    <button id="query-render-chart-btn" class="btn btn-secondary" style="padding: 6px 12px;">Render Chart</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card query-chart-card" id="query-chart-card" style="display: none;">
+                        <div class="section-title-bar">
+                            <h2>📈 Query Visualization</h2>
+                            <span class="section-tag">Interactive</span>
+                        </div>
+                        <div class="chart-container" style="height: 350px;">
+                            <canvas id="custom-query-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="card query-results-card">
+                        <div class="section-title-bar">
+                            <h2>📋 Query Results</h2>
+                            <span class="section-tag" id="query-elapsed-tag">0.0 ms</span>
+                        </div>
+                        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+                            <table class="history-table" id="query-results-table">
+                                <thead id="query-results-thead">
+                                    <tr><th>Results will appear here</th></tr>
+                                </thead>
+                                <tbody id="query-results-tbody">
+                                    <tr class="empty-table-row"><td class="empty-table">No query executed yet.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div class="card scheduled-queries-card">
+                        <div class="section-title-bar">
+                            <h2>⏰ Scheduled Queries</h2>
+                        </div>
+                        <div class="table-container">
+                            <table class="history-table" id="scheduled-queries-table">
+                                <thead>
+                                    <tr>
+                                        <th>Query ID</th>
+                                        <th>SQL Snippet</th>
+                                        <th>Interval (s)</th>
+                                        <th>Last Run</th>
+                                        <th>Last Result / Error</th>
+                                        <th style="text-align: right;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scheduled-queries-tbody">
+                                    <tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -360,12 +492,22 @@
                     <div class="card logs-card">
                         <div class="history-header">
                             <div>
-                                <h2>🔔 Triggered Alert History & Logs</h2>
-                                <p class="settings-description">Chronological log of every trigger event across all active tabs with audio/webhook notification status.</p>
+                                <h2>🔔 Alert History & Logs</h2>
+                                <p class="settings-description">Chronological log of all alerts — threshold rule triggers, engine exceptions, and user-pushed alerts from application code.</p>
                             </div>
                             <div class="history-controls">
                                 <button id="clear-alert-logs-btn" class="btn btn-secondary">Clear Logs</button>
                             </div>
+                        </div>
+
+                        <!-- Alert Source Filter Toggles -->
+                        <div class="alert-filter-bar" id="alert-filter-bar">
+                            <button class="alert-filter-btn active" data-filter="all">All</button>
+                            <button class="alert-filter-btn" data-filter="error"><span class="severity-dot severity-error"></span> Errors</button>
+                            <button class="alert-filter-btn" data-filter="warning"><span class="severity-dot severity-warning"></span> Warnings</button>
+                            <button class="alert-filter-btn" data-filter="user"><span class="source-icon">👤</span> User</button>
+                            <button class="alert-filter-btn" data-filter="engine"><span class="source-icon">⚙️</span> Engine</button>
+                            <button class="alert-filter-btn" data-filter="rule"><span class="source-icon">⚡</span> Rules</button>
                         </div>
 
                         <div class="table-container">
@@ -373,15 +515,17 @@
                                 <thead>
                                     <tr>
                                         <th>Timestamp</th>
-                                        <th>Rule / Condition</th>
-                                        <th>Observed Value vs Threshold</th>
-                                        <th>Server Tab</th>
-                                        <th>Notification Status</th>
+                                        <th>Severity</th>
+                                        <th>Source</th>
+                                        <th>Message / Condition</th>
+                                        <th>Value / Detail</th>
+                                        <th>Server</th>
+                                        <th>Status</th>
                                     </tr>
                                 </thead>
                                 <tbody id="alert-logs-tbody">
                                     <tr class="empty-table-row">
-                                        <td colspan="5" class="empty-table">No alerts triggered yet.</td>
+                                        <td colspan="7" class="empty-table">No alerts triggered yet.</td>
                                     </tr>
                                 </tbody>
                             </table>

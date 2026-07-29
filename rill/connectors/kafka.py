@@ -8,6 +8,9 @@ from typing import Optional, List, Dict, Any
 import pyarrow as pa
 from .base import BaseConnector
 from .json_stream import JSONStreamConnector
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class KafkaConnector(BaseConnector):
@@ -65,13 +68,14 @@ class KafkaConnector(BaseConnector):
                     continue
                 if msg.error():
                     if msg.error().code() != KafkaError._PARTITION_EOF:
-                        # Log error if needed
-                        pass
+                        logger.warning(f"Kafka consumer error for {self.topics}: {msg.error()}")
                     continue
 
                 raw_val = msg.value()
                 if raw_val:
                     self._json_stream.push_bytes(raw_val)
+        except Exception:
+            logger.exception(f"Kafka consumer thread crashed for topics {self.topics}")
         finally:
             consumer.close()
 

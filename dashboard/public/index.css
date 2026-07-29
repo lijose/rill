@@ -1133,4 +1133,160 @@ body {
     border: 1px solid rgba(156, 163, 175, 0.3);
 }
 
+/* ── Alert Filter Bar ─────────────────────────────────────────────────── */
 
+.alert-filter-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 0;
+    flex-wrap: wrap;
+}
+
+.alert-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-outfit);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.alert-filter-btn:hover {
+    border-color: var(--accent-teal);
+    color: var(--text-primary);
+    background: rgba(6, 182, 212, 0.08);
+}
+
+.alert-filter-btn.active {
+    border-color: var(--accent-teal);
+    color: var(--accent-teal);
+    background: rgba(6, 182, 212, 0.12);
+}
+
+/* ── Severity Dots ────────────────────────────────────────────────────── */
+
+.severity-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.severity-dot.severity-error {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.severity-dot.severity-warning {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+}
+
+.severity-dot.severity-info {
+    background: #3b82f6;
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+}
+
+.source-icon {
+    font-size: 12px;
+}
+
+/* ── Severity Badges (in table cells) ─────────────────────────────────── */
+
+.badge-severity {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.badge-severity.error {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.badge-severity.warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.badge-severity.info {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+/* ── Source Badges (in table cells) ────────────────────────────────────── */
+
+.badge-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.badge-source.user {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.badge-source.engine {
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.badge-source.rule {
+    background: rgba(6, 182, 212, 0.15);
+    color: #22d3ee;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+/* ── Severity-colored Toast Borders ───────────────────────────────────── */
+
+.alert-toast.toast-error {
+    border-left: 4px solid #ef4444;
+}
+
+.alert-toast.toast-warning {
+    border-left: 4px solid #f59e0b;
+}
+
+.alert-toast.toast-info {
+    border-left: 4px solid #3b82f6;
+}
+
+/* ── Alert detail expandable ──────────────────────────────────────────── */
+
+.alert-detail-text {
+    font-size: 11px;
+    color: var(--text-secondary);
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.alert-detail-text:hover {
+    white-space: normal;
+    word-break: break-all;
+}

@@ -3,12 +3,15 @@ RillTable: Encapsulates PyArrow Table state, schema, primary keys, and atomic up
 """
 
 import threading
+import logging
 from typing import Union, List, Optional, Callable, TYPE_CHECKING
 import pyarrow as pa
 from .compute.upsert import upsert_table, _ensure_metadata_columns
 from .schema import ensure_schema_metadata, extract_primary_key, extract_mode
 if TYPE_CHECKING:
     from .retention import RetentionPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class RillTable:
@@ -89,8 +92,7 @@ class RillTable:
             try:
                 cb(self.name, table_ref)
             except Exception as e:
-                # Log or ignore callback exceptions so engine loop isn't blocked
-                pass
+                logger.exception(f"Subscriber callback error for table {self.name}")
 
     def upsert(
         self,

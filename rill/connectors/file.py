@@ -14,6 +14,9 @@ import pyarrow.csv as pacsv
 import pyarrow.parquet as papq
 import pyarrow.ipc as paipc
 from .base import BaseConnector
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FileStreamConnector(BaseConnector):
@@ -69,9 +72,13 @@ class FileStreamConnector(BaseConnector):
                         file_path.unlink(missing_ok=True)
                     else:
                         self._processed_files.add(abs_str)
+                        # Prevent unbounded memory growth
+                        if len(self._processed_files) > 10000:
+                            to_keep = set(list(self._processed_files)[5000:])
+                            self._processed_files = to_keep
                 except Exception as e:
                     # Skip or log error on unparseable/partial files being written
-                    pass
+                    logger.warning(f"Failed to parse file {file_path}: {e}")
 
         if not new_tables:
             return None

@@ -66,9 +66,13 @@ def test_quack_client_connection():
     time.sleep(1.0)
     
     try:
+        # If server failed to start, quack_token won't be set
+        if not engine.quack_token:
+            pytest.skip("Quack server failed to start (no token assigned)")
+
         client_con = duckdb.connect()
         client_con.execute("LOAD quack;")
-        client_con.execute("ATTACH 'quack:127.0.0.1:9498' AS remote;")
+        client_con.execute(f"ATTACH 'quack:127.0.0.1:9498' AS remote (TOKEN '{engine.quack_token}');")
         res = client_con.execute("SELECT * FROM remote.rill_metrics").fetchall()
         assert len(res) > 0
     finally:

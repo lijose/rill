@@ -5,11 +5,14 @@ for integration with frontend dashboards (Streamlit, Tkinter) and downstream con
 """
 
 from pathlib import Path
+import logging
 from typing import Optional, Dict, Any, Callable, Union, TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as papq
 import pyarrow.csv as pacsv
 import pyarrow.json as pajson
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .engine import RillEngine
@@ -83,12 +86,12 @@ class OutputAPI:
         elif fmt == "csv":
             pacsv.write_csv(arrow_table, path)
         elif fmt in ("json", "ndjson"):
-            # Write as newline-delimited json
-            pydict_list = arrow_table.to_pylist()
+            # Write as newline-delimited json, streaming chunk-by-chunk to avoid OOM
             import json
             with open(path, "w", encoding="utf-8") as f:
-                for row in pydict_list:
-                    f.write(json.dumps(row) + "\n")
+                for batch in arrow_table.to_batches():
+                    for row in batch.to_pylist():
+                        f.write(json.dumps(row) + "\n")
         else:
             raise ValueError(f"Unsupported sink format: {format}")
 

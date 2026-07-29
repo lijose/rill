@@ -1,12 +1,17 @@
 """
-System performance tracking and live business logic evaluation metrics for Rill Engine.
+System performance tracking, live business logic evaluation metrics,
+and structured alert pipeline for Rill Engine.
 """
 
 import time
+import logging
 import threading
-from typing import Dict, Any, Callable, Optional, TYPE_CHECKING
+import traceback
+from typing import Dict, Any, Callable, Optional, List, Tuple, TYPE_CHECKING
 import json
 import pyarrow as pa
+
+logger = logging.getLogger(__name__)
 
 try:
     import psutil
@@ -24,37 +29,90 @@ if psutil is not None:
         pass
 
 
+# ── System Metric Helpers (with throttling + delta-based CPU) ────────────────
+
+_cpu_cache: Dict[str, Any] = {
+    "value": 0.0,
+    "last_poll": 0.0,
+    # For /proc/stat delta calculation
+    "prev_total": 0.0,
+    "prev_idle": 0.0,
+}
+
+_mem_cache: Dict[str, Any] = {
+    "total": 0,
+    "used": 0,
+    "last_poll": 0.0,
+}
+
+_SYSTEM_POLL_INTERVAL = 1.0  # Max 1 poll per second
+
+
 def get_system_cpu_usage() -> float:
+    now = time.monotonic()
+    if now - _cpu_cache["last_poll"] < _SYSTEM_POLL_INTERVAL:
+        return _cpu_cache["value"]
+
+    _cpu_cache["last_poll"] = now
+
     if psutil is not None:
         try:
             val = psutil.cpu_percent()
             if val > 0:
+                _cpu_cache["value"] = val
                 return val
         except Exception:
             pass
-    # Fallback using /proc/stat
+
+    # Fallback using /proc/stat with delta-based calculation
     try:
         with open('/proc/stat', 'r') as f:
-            lines = f.readlines()
-        for line in lines:
-            if line.startswith('cpu '):
-                parts = [float(x) for x in line.split()[1:]]
-                idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
-                total = sum(parts)
-                return round(100.0 * (1.0 - idle / total), 1) if total > 0 else 0.0
+            for line in f:
+                if line.startswith('cpu '):
+                    parts = [float(x) for x in line.split()[1:]]
+                    idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+                    total = sum(parts)
+
+                    prev_total = _cpu_cache["prev_total"]
+                    prev_idle = _cpu_cache["prev_idle"]
+                    _cpu_cache["prev_total"] = total
+                    _cpu_cache["prev_idle"] = idle
+
+                    # First call: no delta available yet
+                    if prev_total == 0.0:
+                        _cpu_cache["value"] = 0.0
+                        return 0.0
+
+                    delta_total = total - prev_total
+                    delta_idle = idle - prev_idle
+                    if delta_total > 0:
+                        usage = round(100.0 * (1.0 - delta_idle / delta_total), 1)
+                        _cpu_cache["value"] = usage
+                        return usage
+                    break
     except Exception:
         pass
-    return 0.0
+
+    return _cpu_cache["value"]
 
 
 def get_system_memory() -> tuple[int, int]:
+    now = time.monotonic()
+    if now - _mem_cache["last_poll"] < _SYSTEM_POLL_INTERVAL:
+        return _mem_cache["total"], _mem_cache["used"]
+
+    _mem_cache["last_poll"] = now
+
     if psutil is not None:
         try:
             mem = psutil.virtual_memory()
             if mem.total > 0:
+                _mem_cache["total"] = mem.total
+                _mem_cache["used"] = mem.used
                 return mem.total, mem.used
         except Exception:
             pass
+
     # Fallback using /proc/meminfo
     try:
         info = {}
@@ -66,17 +124,52 @@ def get_system_memory() -> tuple[int, int]:
         total = info.get('MemTotal', 0)
         available = info.get('MemAvailable', info.get('MemFree', 0))
         used = total - available if total > available else 0
+        _mem_cache["total"] = total
+        _mem_cache["used"] = used
         return total, used
     except Exception:
         pass
-    return 0, 0
+
+    return _mem_cache["total"], _mem_cache["used"]
 
 
+# ── Alert Entry ──────────────────────────────────────────────────────────────
+
+class AlertEntry:
+    """Represents a single alert record to be flushed to DuckDB."""
+    __slots__ = ('ts', 'severity', 'source', 'message', 'detail')
+
+    def __init__(self, severity: str, source: str, message: str, detail: str = ""):
+        self.ts = time.time()
+        self.severity = severity
+        self.source = source
+        self.message = message
+        self.detail = detail
+
+    def as_tuple(self) -> Tuple:
+        return (self.ts, self.severity, self.source, self.message, self.detail)
+
+
+def create_alerts_table(con) -> None:
+    """Creates the rill_alerts table if it doesn't exist."""
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS rill_alerts (
+            ts DOUBLE,
+            severity VARCHAR,
+            source VARCHAR,
+            message VARCHAR,
+            detail VARCHAR
+        )
+    """)
+
+
+# ── MetricsRegistry ─────────────────────────────────────────────────────────
 
 class MetricsRegistry:
     """
     Tracks real-time system performance metrics and evaluates user-defined live business logic
     during each scheduled micro-batch trigger interval.
+    Also manages a structured alert pipeline for engine and user alerts.
     """
 
     def __init__(self):
@@ -93,6 +186,47 @@ class MetricsRegistry:
         self._business_evaluators: Dict[str, Callable[['RillEngine'], Any]] = {}
         # Cached latest business metric results
         self.business_metrics: Dict[str, Any] = {}
+
+        # Alert buffer (flushed to DuckDB during write_to_duckdb)
+        self._alert_buffer: List[AlertEntry] = []
+
+    # ── Alert Pipeline ───────────────────────────────────────────────────
+
+    def record_alert(
+        self,
+        severity: str,
+        source: str,
+        message: str,
+        detail: str = ""
+    ) -> None:
+        """
+        Records an alert to the internal buffer. Alerts are flushed to the
+        rill_alerts DuckDB table during each write_to_duckdb() call.
+
+        Args:
+            severity: Alert level — "info", "warning", or "error".
+            source: Component name (e.g. "engine.connector.orders", "user", "compute.sql_task.agg").
+            message: Short human-readable alert summary.
+            detail: Optional extended context, traceback, or description.
+        """
+        severity = severity.lower().strip()
+        if severity not in ("info", "warning", "error"):
+            severity = "info"
+
+        entry = AlertEntry(severity=severity, source=source, message=message, detail=detail[:4096])
+        with self._lock:
+            self._alert_buffer.append(entry)
+
+        # Also emit to Python logging
+        log_msg = f"[Rill Alert] [{severity.upper()}] [{source}] {message}"
+        if severity == "error":
+            logger.error(log_msg)
+        elif severity == "warning":
+            logger.warning(log_msg)
+        else:
+            logger.info(log_msg)
+
+    # ── Business Metrics ─────────────────────────────────────────────────
 
     def register_metric(self, name: str, evaluator: Callable[['RillEngine'], Any]) -> None:
         """
@@ -143,6 +277,26 @@ class MetricsRegistry:
                 else:
                     self.records_per_second = (self.records_per_second * 0.8) + (instant_rps * 0.2)
 
+    def record_connector_step(self, conn_name: str, records: int, elapsed_sec: float) -> None:
+        with self._lock:
+            if not hasattr(self, 'connector_rates'):
+                self.connector_rates = {}
+            if elapsed_sec > 0:
+                instant_rps = records / elapsed_sec
+                if conn_name not in self.connector_rates:
+                    self.connector_rates[conn_name] = instant_rps
+                else:
+                    self.connector_rates[conn_name] = (self.connector_rates[conn_name] * 0.8) + (instant_rps * 0.2)
+
+    def record_task_latency(self, task_name: str, latency_ms: float) -> None:
+        with self._lock:
+            if not hasattr(self, 'task_latencies'):
+                self.task_latencies = {}
+            if task_name not in self.task_latencies:
+                self.task_latencies[task_name] = latency_ms
+            else:
+                self.task_latencies[task_name] = (self.task_latencies[task_name] * 0.9) + (latency_ms * 0.1)
+
     def evaluate_business_metrics(self, engine: 'RillEngine') -> Dict[str, Any]:
         """
         Evaluates all registered business logic evaluators against the live engine state.
@@ -156,6 +310,12 @@ class MetricsRegistry:
                 results[name] = evaluator(engine)
             except Exception as e:
                 results[name] = f"Error evaluating metric: {e}"
+                self.record_alert(
+                    severity="warning",
+                    source=f"metrics.business.{name}",
+                    message=f"Business metric '{name}' evaluation failed: {e}",
+                    detail=traceback.format_exc()
+                )
 
         with self._lock:
             self.business_metrics.update(results)
@@ -189,47 +349,131 @@ class MetricsRegistry:
             metrics["business_metrics"] = dict(self.business_metrics)
         return metrics
 
-    def get_metrics_arrow_table(self, engine: 'RillEngine') -> pa.Table:
+    def get_metrics_arrow_table(self, engine: Optional['RillEngine'] = None) -> pa.Table:
         """
-        Constructs a single-row PyArrow Table of the current system, engine, and PyArrow memory metrics.
+        Returns a wide-format single-row PyArrow table containing the current system metrics snapshot.
+        This is registered as the 'rill_metrics' virtual table in DuckDB for zero-copy SQL queries.
         """
+        import json
+        all_metrics = self.get_all_metrics(engine)
+
         cpu_usage = get_system_cpu_usage()
         total_mem, used_mem = get_system_memory()
-        
         pyarrow_allocated = pa.total_allocated_bytes()
         pyarrow_max = pa.default_memory_pool().max_memory()
-        
-        all_metrics = self.get_all_metrics(engine)
-        business_metrics_json = json.dumps(all_metrics.get("business_metrics", {}))
-        
-        data = {
+
+        business_metrics = all_metrics.get("business_metrics", {})
+        business_json = json.dumps({k: v for k, v in business_metrics.items()
+                                     if isinstance(v, (int, float, str, bool, type(None)))})
+
+        return pa.table({
             "timestamp": [time.time()],
-            "cpu_usage": [cpu_usage],
-            "total_memory": [total_mem],
-            "used_memory": [used_mem],
-            "pyarrow_allocated_bytes": [pyarrow_allocated],
-            "pyarrow_max_memory": [pyarrow_max],
-            "last_batch_records": [all_metrics.get("last_batch_records", 0)],
-            "total_records_processed": [all_metrics.get("total_records_processed", 0)],
-            "last_batch_latency_ms": [all_metrics.get("last_batch_latency_ms", 0.0)],
-            "avg_batch_latency_ms": [all_metrics.get("avg_batch_latency_ms", 0.0)],
-            "records_per_second": [all_metrics.get("records_per_second", 0.0)],
-            "business_metrics": [business_metrics_json],
-        }
-        
-        schema = pa.schema([
-            ("timestamp", pa.float64()),
-            ("cpu_usage", pa.float64()),
-            ("total_memory", pa.int64()),
-            ("used_memory", pa.int64()),
-            ("pyarrow_allocated_bytes", pa.int64()),
-            ("pyarrow_max_memory", pa.int64()),
-            ("last_batch_records", pa.int64()),
-            ("total_records_processed", pa.int64()),
-            ("last_batch_latency_ms", pa.float64()),
-            ("avg_batch_latency_ms", pa.float64()),
-            ("records_per_second", pa.float64()),
-            ("business_metrics", pa.string()),
-        ])
-        
-        return pa.Table.from_pydict(data, schema=schema)
+            "cpu_usage": [float(cpu_usage)],
+            "total_memory": [float(total_mem)],
+            "used_memory": [float(used_mem)],
+            "pyarrow_allocated_bytes": [float(pyarrow_allocated)],
+            "pyarrow_max_memory": [float(pyarrow_max)],
+            "last_batch_records": [float(all_metrics.get("last_batch_records", 0))],
+            "total_records_processed": [float(all_metrics.get("total_records_processed", 0))],
+            "last_batch_latency_ms": [float(all_metrics.get("last_batch_latency_ms", 0.0))],
+            "avg_batch_latency_ms": [float(all_metrics.get("avg_batch_latency_ms", 0.0))],
+            "records_per_second": [float(all_metrics.get("records_per_second", 0.0))],
+            "business_metrics": [business_json],
+        })
+
+    def write_to_duckdb(self, con: 'duckdb.DuckDBPyConnection', engine: 'RillEngine') -> None:
+        """
+        Writes current system and business metrics to the given DuckDB connection using a tall schema.
+        Also flushes buffered alerts to rill_alerts and performs scheduled retention.
+        """
+        import duckdb
+
+        cpu_usage = get_system_cpu_usage()
+        total_mem, used_mem = get_system_memory()
+
+        pyarrow_allocated = pa.total_allocated_bytes()
+        pyarrow_max = pa.default_memory_pool().max_memory()
+
+        all_metrics = self.get_all_metrics(engine)
+
+        duckdb_live_bytes = 0
+        try:
+            duckdb_live_bytes = engine.duckdb.con.execute("SELECT SUM(memory_usage) FROM pragma_database_size()").fetchone()[0] or 0
+        except Exception:
+            pass
+
+        duckdb_metrics_bytes = 0
+        try:
+            duckdb_metrics_bytes = con.execute("SELECT SUM(memory_usage) FROM pragma_database_size()").fetchone()[0] or 0
+        except Exception:
+            pass
+
+        ts = time.time()
+
+        metrics_list = [
+            (ts, "cpu_usage", float(cpu_usage)),
+            (ts, "total_memory", float(total_mem)),
+            (ts, "used_memory", float(used_mem)),
+            (ts, "pyarrow_allocated_bytes", float(pyarrow_allocated)),
+            (ts, "pyarrow_max_memory", float(pyarrow_max)),
+            (ts, "duckdb_live_bytes", float(duckdb_live_bytes)),
+            (ts, "duckdb_metrics_bytes", float(duckdb_metrics_bytes)),
+            (ts, "last_batch_records", float(all_metrics.get("last_batch_records", 0))),
+            (ts, "total_records_processed", float(all_metrics.get("total_records_processed", 0))),
+            (ts, "last_batch_latency_ms", float(all_metrics.get("last_batch_latency_ms", 0.0))),
+            (ts, "avg_batch_latency_ms", float(all_metrics.get("avg_batch_latency_ms", 0.0))),
+            (ts, "records_per_second", float(all_metrics.get("records_per_second", 0.0)))
+        ]
+
+        # Add per-connector ingestion rates
+        with self._lock:
+            if hasattr(self, 'connector_rates'):
+                for conn_name, rate in self.connector_rates.items():
+                    metrics_list.append((ts, f"ingestion_rate_{conn_name}", float(rate)))
+
+            # Add per-task latencies
+            if hasattr(self, 'task_latencies'):
+                for task_name, lat in self.task_latencies.items():
+                    metrics_list.append((ts, f"task_latency_ms_{task_name}", float(lat)))
+
+        business_metrics = all_metrics.get("business_metrics", {})
+        for k, v in business_metrics.items():
+            try:
+                metrics_list.append((ts, k, float(v)))
+            except (ValueError, TypeError):
+                pass
+
+        if not metrics_list:
+            return
+
+        # Write metrics to duckdb
+        try:
+            con.executemany("INSERT INTO rill_metrics VALUES (?, ?, ?)", metrics_list)
+
+            # Scheduled retention: keep last 1 hour
+            cutoff = ts - 3600
+            con.execute("DELETE FROM rill_metrics WHERE ts < ?", [cutoff])
+        except Exception:
+            logger.exception("Failed to write metrics to DuckDB")
+
+        # Flush buffered alerts to rill_alerts table
+        with self._lock:
+            alerts_to_flush = list(self._alert_buffer)
+            self._alert_buffer.clear()
+
+        if alerts_to_flush:
+            try:
+                alert_rows = [a.as_tuple() for a in alerts_to_flush]
+                con.executemany(
+                    "INSERT INTO rill_alerts VALUES (?, ?, ?, ?, ?)",
+                    alert_rows
+                )
+            except Exception:
+                logger.exception("Failed to write alerts to DuckDB")
+
+        # Alert retention: keep last 1 hour
+        try:
+            cutoff = ts - 3600
+            con.execute("DELETE FROM rill_alerts WHERE ts < ?", [cutoff])
+        except Exception:
+            pass

@@ -130,6 +130,13 @@ wss.on('connection', (ws) => {
                     workersMap.get(tabId).kill();
                     workersMap.delete(tabId);
                 }
+            } else if (req.action === 'preview_query' || req.action === 'schedule_query' || req.action === 'unschedule_query') {
+                const { tabId } = req;
+                const workersMap = activeWorkers.get(ws);
+                if (workersMap && workersMap.has(tabId)) {
+                    const worker = workersMap.get(tabId);
+                    worker.stdin.write(JSON.stringify(req) + '\n');
+                }
             }
         } catch (err) {
             console.error('[WebSocket Error processing message]:', err);

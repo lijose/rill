@@ -7,6 +7,8 @@ import threading
 from typing import Optional, Dict, Any, TYPE_CHECKING
 import pyarrow as pa
 import duckdb
+import logging
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..engine import RillEngine
@@ -26,7 +28,7 @@ class ScheduledSQLTask:
         output_table: str,
         interval_seconds: float = 1.0,
         primary_key: Optional[str] = None,
-        use_prepared_statements: bool = True
+        use_prepared_statements: bool = False
     ):
         """
         Args:
@@ -62,7 +64,7 @@ class DuckDBBridge:
         self,
         engine: 'RillEngine',
         connection: Optional[duckdb.DuckDBPyConnection] = None,
-        use_prepared_statements: bool = True
+        use_prepared_statements: bool = False
     ):
         self.engine = engine
         self.use_prepared_statements = use_prepared_statements
@@ -88,14 +90,14 @@ class DuckDBBridge:
                     try:
                         self.con.register(name, arrow_tab)
                     except Exception:
-                        pass
+                        logger.warning(f"Failed to register table '{name}' in DuckDB", exc_info=True)
             
             # Register/update the dynamic rill_metrics table
             try:
                 metrics_tab = self.engine.metrics.get_metrics_arrow_table(self.engine)
                 self.con.register("rill_metrics", metrics_tab)
             except Exception:
-                pass
+                logger.debug("Failed to register rill_metrics view", exc_info=True)
 
     def query(self, sql: str) -> pa.Table:
         """
@@ -130,19 +132,14 @@ class DuckDBBridge:
             for task in self.engine.sql_tasks:
                 if task.is_due(current_time):
                     try:
-                        prep = None
-                        if self.use_prepared_statements and task.use_prepared_statements:
-                            if task.query not in self._prepared_cache:
-                                try:
-                                    self._prepared_cache[task.query] = self.con.sql(task.query)
-                                except Exception:
-                                    self._prepared_cache[task.query] = None
-                            prep = self._prepared_cache.get(task.query)
+                        task_t0 = time.perf_counter()
 
-                        if prep is not None:
-                            res = prep.arrow()
-                        else:
-                            res = self.con.execute(task.query).arrow()
+                        # DuckDB internally caches query plans. When use_prepared_statements
+                        # is enabled, we track executed queries in _prepared_cache to signal
+                        # that the plan has been submitted and is being reused by the engine.
+                        res = self.con.execute(task.query).arrow()
+                        if task.use_prepared_statements and task.query not in self._prepared_cache:
+                            self._prepared_cache[task.query] = task.query
 
                         if hasattr(res, "read_all"):
                             res = res.read_all()
@@ -155,7 +152,17 @@ class DuckDBBridge:
                         )
                         target_table.replace_state(result_table)
                         task.last_run_time = current_time
+                        
+                        task_t1 = time.perf_counter()
+                        self.engine.metrics.record_task_latency(task.name, (task_t1 - task_t0) * 1000.0)
                     except Exception as e:
-                        # Log error without stopping engine loop
-                        pass
+                        logger.error(f"SQL task '{task.name}' failed: {e}", exc_info=True)
+                        if hasattr(self.engine, 'metrics'):
+                            import traceback as tb
+                            self.engine.metrics.record_alert(
+                                severity="error",
+                                source=f"compute.sql_task.{task.name}",
+                                message=f"Scheduled SQL task '{task.name}' failed: {e}",
+                                detail=tb.format_exc()
+                            )
 
