@@ -38,7 +38,8 @@ class RillEngine:
         quack_address: Optional[str] = None,
         quack_token: Optional[str] = None,
         auto_compact_chunks: int = 32,
-        metrics_db_path: Optional[str] = None
+        metrics_db_path: Optional[str] = None,
+        metrics_ttl_seconds: float = 600.0
     ):
         """
         Args:
@@ -65,10 +66,18 @@ class RillEngine:
         
         # Initialize metrics database (metrics_con)
         import duckdb
-        self.metrics_db_path = metrics_db_path or "rill_metrics.db"
+        import os
+        if metrics_db_path is None:
+            if "PYTEST_CURRENT_TEST" in os.environ:
+                self.metrics_db_path = ":memory:"
+            else:
+                self.metrics_db_path = "rill_metrics.db"
+        else:
+            self.metrics_db_path = metrics_db_path
         self.metrics_con = duckdb.connect(database=self.metrics_db_path)
         self.metrics_con.execute("CREATE TABLE IF NOT EXISTS rill_metrics (ts DOUBLE, metric_name VARCHAR, value DOUBLE)")
         create_alerts_table(self.metrics_con)
+        self.metrics_ttl_seconds = metrics_ttl_seconds
 
         if memory_budget_mb is not None and memory_budget_bytes is None:
             memory_budget_bytes = int(memory_budget_mb * 1024 * 1024)
@@ -343,6 +352,29 @@ class RillEngine:
             self.metrics.evaluate_business_metrics(self)
             self.metrics.write_to_duckdb(self.metrics_con, self)
 
+            # Maintain rill_tables catalog in metrics_con for Quack serving
+            try:
+                table_names = []
+                
+                # Also include metric tables in the catalog list
+                table_names.extend(["rill_metrics", "rill_alerts"])
+                for t in self.sql_tasks:
+                    if t.output_table:
+                        table_names.append(t.output_table)
+                import re
+                def sanitize(n): return re.sub(r'\W+', '_', n).strip('_').lower()
+                for task_name in self.metrics.task_latencies.keys() if hasattr(self.metrics, 'task_latencies') else []:
+                    table_names.append(f"task_metrics_{sanitize(task_name)}")
+                for metric_name in self.metrics.business_metrics.keys():
+                    table_names.append(f"business_metrics_{sanitize(metric_name)}")
+                
+                # Maintain rill_tables
+                self.metrics_con.execute("CREATE OR REPLACE TABLE rill_tables (table_name VARCHAR)")
+                if table_names:
+                    self.metrics_con.executemany("INSERT INTO rill_tables VALUES (?)", [(t,) for t in set(table_names)])
+            except Exception as e:
+                logger.error(f"Error syncing tables to metrics_con: {e}")
+
             # 6. Check PyArrow memory budget
             self.check_memory_budget()
 
@@ -429,7 +461,7 @@ class RillEngine:
         if self._quack_thread is not None:
             if self._quack_thread.is_alive():
                 try:
-                    # Signal the Quack server to stop via the metrics connection
+                    # Signal the Quack server to stop via the main connection
                     self.metrics_con.execute("LOAD quack;")
                     self.metrics_con.execute("CALL quack_stop(?);", [self.quack_address])
                 except Exception:

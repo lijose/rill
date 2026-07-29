@@ -611,7 +611,11 @@ body {
 .history-table th {
     font-weight: 600;
     color: var(--text-secondary);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-card);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
 .history-table tr:hover td {

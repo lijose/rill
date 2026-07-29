@@ -159,7 +159,9 @@ Install Rill locally or in editable mode with development & connector dependenci
 ```bash
 git clone https://github.com/lijose/rill.git
 cd rill
-pip install -e .[dev,connectors]
+python3 -m venv .env
+source .env/bin/activate 
+pip install -e .
 ```
 
 ### 1. Running the Live Dashboard & Quack Demo

@@ -13,10 +13,26 @@ import duckdb
 import threading
 import re
 
+# Monkey-patch json.dumps to handle DuckDB types like Decimal and datetime
+_orig_dumps = json.dumps
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        import decimal, datetime
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        if isinstance(obj, (datetime.datetime, datetime.date, datetime.time, datetime.timedelta)):
+            return str(obj)
+        try:
+            return super().default(obj)
+        except TypeError:
+            return str(obj)
+
+json.dumps = lambda obj, **kwargs: _orig_dumps(obj, cls=CustomJSONEncoder, **kwargs)
+
 db_lock = threading.RLock()
 scheduled_queries = {}  # queryId -> { 'sql': str, 'interval': float, 'last_run': float }
 
-ALLOWLIST_REGEX = re.compile(r'^\s*(SELECT|WITH|EXPLAIN|PRAGMA\s+show_tables|DESCRIBE)\b', re.IGNORECASE)
+ALLOWLIST_REGEX = re.compile(r'^\s*(SELECT|WITH|EXPLAIN|PRAGMA\s+show_tables|DESCRIBE|SHOW)\b', re.IGNORECASE)
 
 # Track the last alert timestamp we've seen to only send new alerts
 _last_alert_ts = 0.0
@@ -28,7 +44,12 @@ def is_allowed_sql(sql):
 
 def execute_query(con, sql):
     if not is_allowed_sql(sql):
-        raise ValueError("Statement not allowed. Only SELECT, WITH, EXPLAIN, PRAGMA show_tables, DESCRIBE are permitted.")
+        raise ValueError("Statement not allowed. Only SELECT, WITH, EXPLAIN, SHOW, PRAGMA show_tables, DESCRIBE are permitted.")
+    
+    # Intercept queries for information_schema.tables to workaround Quack catalog limitations
+    if "information_schema.tables" in sql.lower():
+        sql = "SELECT 'remote_db' AS table_catalog, 'main' AS table_schema, table_name FROM remote_db.rill_tables;"
+
     t0 = time.perf_counter()
     res = con.execute(sql).fetchall()
     cols = [desc[0] for desc in con.description] if con.description else []
@@ -42,19 +63,24 @@ def metrics_loop(con):
         try:
             with db_lock:
                 # Get the latest metric values for each metric_name
-                sql = """
-                    SELECT ts, metric_name, value 
-                    FROM remote_db.rill_metrics 
-                    WHERE ts = (SELECT MAX(ts) FROM remote_db.rill_metrics)
-                """
-                res = con.execute(sql).fetchall()
-                if res:
-                    data = {}
-                    for row in res:
-                        data[row[1]] = row[2]
-                    # Also include the timestamp as a top-level or in data
-                    data["timestamp"] = res[0][0]
-                    print(json.dumps({"type": "metrics", "data": data}), flush=True)
+                max_ts_res = con.execute("SELECT MAX(ts) FROM remote_db.rill_metrics").fetchone()
+                if max_ts_res and max_ts_res[0] is not None:
+                    max_ts = max_ts_res[0]
+                    sql = f"""
+                        SELECT ts, metric_name, value 
+                        FROM remote_db.rill_metrics 
+                        WHERE ts = {max_ts}
+                    """
+                    res = con.execute(sql).fetchall()
+                    if res:
+                        data = {}
+                        for row in res:
+                            data[row[1]] = row[2]
+                        # Also include the timestamp as a top-level or in data
+                        data["timestamp"] = res[0][0]
+                        print(json.dumps({"type": "metrics", "data": data}), flush=True)
+                    else:
+                        print(json.dumps({"error": "No metrics found in remote_db.rill_metrics"}), flush=True)
                 else:
                     print(json.dumps({"error": "No metrics found in remote_db.rill_metrics"}), flush=True)
         except Exception as e:

@@ -93,9 +93,16 @@ wss.on('connection', (ws) => {
                 const worker = spawn(pythonBin, args, { cwd: __dirname });
                 workersMap.set(tabId, worker);
 
+                let stdoutBuffer = '';
+
                 worker.stdout.on('data', (data) => {
-                    const lines = data.toString().split('\n').filter(Boolean);
-                    for (const line of lines) {
+                    stdoutBuffer += data.toString();
+                    let newlineIndex;
+                    while ((newlineIndex = stdoutBuffer.indexOf('\n')) !== -1) {
+                        const line = stdoutBuffer.slice(0, newlineIndex);
+                        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+                        if (!line.trim()) continue;
+                        
                         try {
                             const parsed = JSON.parse(line);
                             if (parsed.error) {
@@ -103,7 +110,7 @@ wss.on('connection', (ws) => {
                             }
                             ws.send(JSON.stringify({ tabId, payload: parsed }));
                         } catch (err) {
-                            console.error(`[Worker Non-JSON Output] ${line}`);
+                            console.error(`[Worker Non-JSON Output] ${line.substring(0, 200)}${line.length > 200 ? '...' : ''}`);
                         }
                     }
                 });

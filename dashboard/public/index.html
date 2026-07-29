@@ -24,10 +24,15 @@
                 <img src="logo.png" alt="Rill Logo" class="logo-img">
                 <h1>Rill <span>Metrics Console</span></h1>
             </div>
-            
-            <div class="connection-status" id="connection-status-pill">
-                <span class="status-dot"></span>
-                <span class="status-text">Disconnected</span>
+            <div class="header-controls" style="display: flex; gap: 15px; align-items: center;">
+                <div class="theme-picker" style="display: flex; gap: 6px; align-items: center; border-right: 1px solid var(--border-color); padding-right: 15px;">
+                    <label for="bg-color-picker" style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">Theme</label>
+                    <input type="color" id="bg-color-picker" value="#0b0f19" style="background: none; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; width: 24px; height: 24px; padding: 0;">
+                </div>
+                <div class="connection-status" id="connection-status-pill">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
             </div>
         </header>
 
@@ -223,6 +228,17 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- SECTION 3: SCHEDULED QUERY WIDGETS -->
+                    <div class="section-container scheduled-spotlight" id="scheduled-widgets-container" style="display: none;">
+                        <div class="section-title-bar">
+                            <h2>⏰ Scheduled Query Live Views</h2>
+                            <span class="section-tag" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border-color: rgba(245, 158, 11, 0.3);">Live Streaming</span>
+                        </div>
+                        <div id="scheduled-widgets-grid" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: stretch;">
+                            <!-- Live widgets appended here -->
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- VIEW 4: CUSTOM QUERIES -->
@@ -249,10 +265,24 @@
                         
                         <div class="query-actions" style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
                             <button id="run-query-btn" class="btn btn-primary">▶ Run Query</button>
+                            <button id="show-tables-btn" class="btn btn-secondary">📋 Show Tables</button>
+                            
+                            <div style="display: flex; gap: 5px; align-items: center; border-left: 1px solid var(--border); padding-left: 15px;">
+                                <label for="query-limit" style="font-size: 12px;">Limit:</label>
+                                <select id="query-limit" class="select-control" style="padding: 6px;">
+                                    <option value="10">10</option>
+                                    <option value="20" selected>20</option>
+                                    <option value="50">50</option>
+                                    <option value="100">100</option>
+                                    <option value="all">All</option>
+                                </select>
+                            </div>
                             
                             <div class="schedule-group" style="display: flex; gap: 10px; align-items: center; border-left: 1px solid var(--border); padding-left: 15px;">
-                                <label for="schedule-interval">Interval (s):</label>
-                                <input type="number" id="schedule-interval" min="1" value="5" class="number-input" style="width: 70px;">
+                                <label for="query-name" style="font-size: 12px;">Name:</label>
+                                <input type="text" id="query-name" placeholder="Optional name" class="text-input" style="width: 120px; padding: 6px;">
+                                <label for="schedule-interval" style="font-size: 12px;">Interval (s):</label>
+                                <input type="number" id="schedule-interval" min="1" value="5" class="number-input" style="width: 60px;">
                                 <button id="schedule-query-btn" class="btn btn-secondary">⏰ Schedule Query</button>
                             </div>
                         </div>
@@ -326,6 +356,7 @@
                             <table class="history-table" id="scheduled-queries-table">
                                 <thead>
                                     <tr>
+                                        <th>Name</th>
                                         <th>Query ID</th>
                                         <th>SQL Snippet</th>
                                         <th>Interval (s)</th>
@@ -335,7 +366,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="scheduled-queries-tbody">
-                                    <tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>
+                                    <tr class="empty-table-row"><td colspan="7" class="empty-table">No queries scheduled.</td></tr>
                                 </tbody>
                             </table>
                         </div>

@@ -99,6 +99,15 @@ class DuckDBBridge:
             except Exception:
                 logger.debug("Failed to register rill_metrics view", exc_info=True)
 
+            # Register a rill_tables view so remote clients can discover tables
+            try:
+                table_names = list(self.engine.tables.keys())
+                table_names.extend(["rill_metrics", "rill_alerts", "rill_tables"])
+                tables_pa = pa.table({"table_name": pa.array(table_names, type=pa.string())})
+                self.con.register("rill_tables", tables_pa)
+            except Exception:
+                logger.debug("Failed to register rill_tables view", exc_info=True)
+
     def query(self, sql: str) -> pa.Table:
         """
         Executes a DuckDB SQL query over the live registered PyArrow tables and returns a `pa.Table`.
@@ -151,6 +160,19 @@ class DuckDBBridge:
                             primary_key=task.primary_key
                         )
                         target_table.replace_state(result_table)
+
+                        # NEW: Insert historical snapshot into metrics_con for dashboard querying
+                        metrics_con = self.engine.metrics_con
+                        temp_view = f"__temp_{id(task)}"
+                        metrics_con.register(temp_view, result_table)
+                        try:
+                            import datetime
+                            iso_ts = datetime.datetime.now().isoformat()
+                            metrics_con.execute(f"CREATE TABLE IF NOT EXISTS {task.output_table} AS SELECT *, '{iso_ts}' AS insert_ts FROM {temp_view} WHERE 1=0")
+                            metrics_con.execute(f"INSERT INTO {task.output_table} SELECT *, '{iso_ts}' AS insert_ts FROM {temp_view}")
+                        finally:
+                            metrics_con.unregister(temp_view)
+
                         task.last_run_time = current_time
                         
                         task_t1 = time.perf_counter()

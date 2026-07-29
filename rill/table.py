@@ -49,7 +49,10 @@ class RillTable:
 
         self.retention_policy = retention_policy
         self._validate_mode_and_ttl()
-        self._arrow_table: Optional[pa.Table] = None
+        if self.schema is not None:
+            self._arrow_table = pa.Table.from_batches([], schema=self.schema)
+        else:
+            self._arrow_table: Optional[pa.Table] = None
         self._lock = threading.RLock()
         self._callbacks: List[Callable[[str, pa.Table], None]] = []
 

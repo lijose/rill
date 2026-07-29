@@ -447,13 +447,41 @@ class MetricsRegistry:
             return
 
         # Write metrics to duckdb
+        import re
+        def sanitize_name(name: str) -> str:
+            return re.sub(r'\W+', '_', name).strip('_').lower()
+
         try:
+            con.execute("BEGIN TRANSACTION")
             con.executemany("INSERT INTO rill_metrics VALUES (?, ?, ?)", metrics_list)
 
-            # Scheduled retention: keep last 1 hour
-            cutoff = ts - 3600
+            # Scheduled retention
+            cutoff = ts - getattr(engine, 'metrics_ttl_seconds', 600.0)
             con.execute("DELETE FROM rill_metrics WHERE ts < ?", [cutoff])
+
+            # Write task metrics to individual tables
+            with self._lock:
+                if hasattr(self, 'task_latencies'):
+                    for task_name, lat in self.task_latencies.items():
+                        t_name = f"task_metrics_{sanitize_name(task_name)}"
+                        con.execute(f"CREATE TABLE IF NOT EXISTS {t_name} (ts DOUBLE, latency_ms DOUBLE)")
+                        con.execute(f"INSERT INTO {t_name} VALUES (?, ?)", [ts, float(lat)])
+                        con.execute(f"DELETE FROM {t_name} WHERE ts < ?", [cutoff])
+
+            # Write business metrics to individual tables
+            for k, v in business_metrics.items():
+                try:
+                    val = float(v)
+                    b_name = f"business_metrics_{sanitize_name(k)}"
+                    con.execute(f"CREATE TABLE IF NOT EXISTS {b_name} (ts DOUBLE, value DOUBLE)")
+                    con.execute(f"INSERT INTO {b_name} VALUES (?, ?)", [ts, val])
+                    con.execute(f"DELETE FROM {b_name} WHERE ts < ?", [cutoff])
+                except (ValueError, TypeError):
+                    pass
+
+            con.commit()
         except Exception:
+            con.execute("ROLLBACK")
             logger.exception("Failed to write metrics to DuckDB")
 
         # Flush buffered alerts to rill_alerts table
@@ -463,17 +491,16 @@ class MetricsRegistry:
 
         if alerts_to_flush:
             try:
+                con.execute("BEGIN TRANSACTION")
                 alert_rows = [a.as_tuple() for a in alerts_to_flush]
                 con.executemany(
                     "INSERT INTO rill_alerts VALUES (?, ?, ?, ?, ?)",
                     alert_rows
                 )
+                # Alert retention
+                cutoff = ts - getattr(engine, 'metrics_ttl_seconds', 600.0)
+                con.execute("DELETE FROM rill_alerts WHERE ts < ?", [cutoff])
+                con.commit()
             except Exception:
+                con.execute("ROLLBACK")
                 logger.exception("Failed to write alerts to DuckDB")
-
-        # Alert retention: keep last 1 hour
-        try:
-            cutoff = ts - 3600
-            con.execute("DELETE FROM rill_alerts WHERE ts < ?", [cutoff])
-        except Exception:
-            pass

@@ -76,6 +76,7 @@ const valDuckdbMetrics = document.getElementById('val-duckdb-metrics');
 // Custom Queries DOM
 const sqlQueryEditor = document.getElementById('sql-query-editor');
 const runQueryBtn = document.getElementById('run-query-btn');
+const showTablesBtn = document.getElementById('show-tables-btn');
 const scheduleInterval = document.getElementById('schedule-interval');
 const scheduleQueryBtn = document.getElementById('schedule-query-btn');
 const queryErrorMsg = document.getElementById('query-error-msg');
@@ -140,8 +141,15 @@ function initWebSocket() {
             const connObj = activeConnections.find(c => c.id === tabId);
             if (!connObj) return;
 
-            if (payload.error) {
+            if (payload.type === 'query_result') {
+                if (activeConnectionId !== tabId) return;
+                renderQueryResults(payload);
+            } else if (payload.type === 'scheduled_result') {
+                if (activeConnectionId !== tabId) return;
+                updateScheduledQueryResult(payload);
+            } else if (payload.error) {
                 console.error(`Error for tab ${tabId}:`, payload.error);
+                showToast('Quack Worker Error', payload.error, '', 'error');
                 connObj.status = 'error';
                 connObj.lastError = payload.error;
                 renderTabs();
@@ -221,12 +229,6 @@ function initWebSocket() {
             } else if (payload.type === 'engine_alerts') {
                 // Server-side engine/user alerts from rill_alerts table
                 handleEngineAlerts(payload.data, connObj);
-            } else if (payload.type === 'query_result') {
-                if (activeConnectionId !== tabId) return;
-                renderQueryResults(payload);
-            } else if (payload.type === 'scheduled_result') {
-                if (activeConnectionId !== tabId) return;
-                updateScheduledQueryResult(payload);
             }
         } catch (err) {
             console.error("Error processing WebSocket message:", err);
@@ -351,6 +353,15 @@ function extractNumeric(val) {
         return isNaN(n) ? null : n;
     }
     return null;
+}
+
+function sortRowsX(a, b, col) {
+    const vA = a[col];
+    const vB = b[col];
+    if (typeof vA === 'string' && isNaN(Number(vA))) {
+        return String(vA).localeCompare(String(vB));
+    }
+    return extractNumeric(vA) - extractNumeric(vB);
 }
 
 // Update UI Dashboard metrics & Business cards
@@ -1047,8 +1058,14 @@ document.addEventListener('DOMContentLoaded', () => {
     
     runQueryBtn.addEventListener('click', () => {
         if (!activeConnectionId) return;
-        const sql = sqlQueryEditor.value.trim();
+        let sql = sqlQueryEditor.value.trim();
         if (!sql) return;
+        
+        const limitSelect = document.getElementById('query-limit');
+        if (limitSelect && limitSelect.value !== 'all' && sql.toUpperCase().startsWith('SELECT') && !/LIMIT\s+\d+/i.test(sql)) {
+            if (sql.endsWith(';')) sql = sql.slice(0, -1);
+            sql = `${sql} LIMIT ${limitSelect.value}`;
+        }
         
         queryErrorMsg.style.display = 'none';
         queryResultsTbody.innerHTML = '<tr><td class="empty-table">Executing query...</td></tr>';
@@ -1061,6 +1078,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
     });
     
+    if (showTablesBtn) {
+        showTablesBtn.addEventListener('click', () => {
+            if (!activeConnectionId) return;
+            sqlQueryEditor.value = "SELECT table_catalog, table_schema, table_name FROM information_schema.tables;";
+            runQueryBtn.click();
+        });
+    }
+    
     scheduleQueryBtn.addEventListener('click', () => {
         if (!activeConnectionId) return;
         const sql = sqlQueryEditor.value.trim();
@@ -1068,6 +1093,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!sql || interval <= 0 || isNaN(interval)) return;
         
         const qid = generateQueryId();
+        const customName = document.getElementById('query-name') ? document.getElementById('query-name').value.trim() : '';
+        
+        window.scheduledConfigs = window.scheduledConfigs || {};
+        window.scheduledConfigs[qid] = {
+            name: customName,
+            sql: sql,
+            type: queryChartType.value,
+            xCol: queryXCol.value,
+            yCol: queryYCol.value,
+            colorCol: queryColorCol.value
+        };
         
         ws.send(JSON.stringify({
             action: 'schedule_query',
@@ -1077,10 +1113,10 @@ document.addEventListener('DOMContentLoaded', () => {
             intervalSeconds: interval
         }));
         
-        // Add to UI immediately, it will update when result comes
         const tr = document.createElement('tr');
         tr.id = `sched-row-${qid}`;
         tr.innerHTML = `
+            <td><strong>${customName || '-'}</strong></td>
             <td>${qid.substring(0, 8)}...</td>
             <td title="${sql}">${sql.length > 30 ? sql.substring(0, 30) + '...' : sql}</td>
             <td>${interval}s</td>
@@ -1102,11 +1138,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 tabId: activeConnectionId,
                 queryId: qid
             }));
+            
             tr.remove();
             if (scheduledQueriesTbody.children.length === 0) {
                 scheduledQueriesTbody.innerHTML = '<tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>';
             }
-        });
+            
+            if (window.scheduledConfigs && window.scheduledConfigs[qid]) delete window.scheduledConfigs[qid];
+            if (window.scheduledCharts && window.scheduledCharts[qid]) {
+                window.scheduledCharts[qid].destroy();
+                delete window.scheduledCharts[qid];
+            }
+            const widget = document.getElementById(`widget-${qid}`);
+            if (widget) widget.remove();
+            
+            const grid = document.getElementById('scheduled-widgets-grid');
+            if (grid && grid.children.length === 0) {
+                document.getElementById('scheduled-widgets-container').style.display = 'none';
+            }
+    });
     });
     
     window.renderQueryResults = function(payload) {
@@ -1187,11 +1237,11 @@ document.addEventListener('DOMContentLoaded', () => {
         let datasets = [];
         
         const palette = [
-            'var(--accent-teal)',
-            'var(--accent-indigo)',
-            'var(--accent-purple)',
-            'var(--accent-red)',
-            'var(--accent-yellow)',
+            '#06b6d4', // teal
+            '#6366f1', // indigo
+            '#a855f7', // purple
+            '#ef4444', // red
+            '#f59e0b', // yellow/amber
             '#2ECC71', '#3498DB', '#9B59B6', '#E74C3C', '#F1C40F'
         ];
         
@@ -1206,7 +1256,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let colorIdx = 0;
             for (const [gName, gRows] of Object.entries(groups)) {
                 // sort rows by X
-                gRows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+                gRows.sort((a,b) => sortRowsX(a, b, xCol));
                 
                 datasets.push({
                     label: String(gName),
@@ -1219,7 +1269,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 colorIdx++;
             }
         } else {
-            rows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+            rows.sort((a,b) => sortRowsX(a, b, xCol));
             datasets.push({
                 label: yCol,
                 data: rows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
@@ -1234,6 +1284,9 @@ document.addEventListener('DOMContentLoaded', () => {
             customQueryChart.destroy();
         }
         
+        const firstXVal = rows.length > 0 ? rows[0][xCol] : null;
+        const xIsCategory = typeof firstXVal === 'string' && isNaN(Number(firstXVal));
+
         const ctx = document.getElementById('custom-query-chart').getContext('2d');
         customQueryChart = new Chart(ctx, {
             type: type === 'scatter' ? 'scatter' : (type === 'bar' ? 'bar' : 'line'),
@@ -1244,7 +1297,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 interaction: { mode: 'nearest', intersect: false },
                 plugins: {
                     legend: {
-                        labels: { color: 'var(--text)' },
+                        labels: { color: 'var(--text-primary)' },
                         onClick: function(e, legendItem, legend) {
                             const index = legendItem.datasetIndex;
                             const ci = legend.chart;
@@ -1263,8 +1316,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 },
                 scales: {
-                    x: { type: 'linear', ticks: { color: 'var(--text-muted)' }, grid: { color: 'var(--border)' } },
-                    y: { ticks: { color: 'var(--text-muted)' }, grid: { color: 'var(--border)' } }
+                    x: { type: xIsCategory ? 'category' : 'linear', ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } },
+                    y: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } }
                 }
             }
         });
@@ -1280,9 +1333,136 @@ document.addEventListener('DOMContentLoaded', () => {
         if (payload.error) {
             tr.querySelector('.last-result').innerText = payload.error;
             tr.querySelector('.last-result').style.color = 'var(--accent-red)';
+            return;
         } else {
             tr.querySelector('.last-result').innerText = `Success (${payload.rows ? payload.rows.length : 0} rows, ${payload.elapsed_ms.toFixed(1)}ms)`;
             tr.querySelector('.last-result').style.color = 'var(--accent-teal)';
+        }
+
+        const config = (window.scheduledConfigs || {})[payload.queryId];
+        if (!config || !payload.rows) return;
+        
+        const container = document.getElementById('scheduled-widgets-container');
+        const grid = document.getElementById('scheduled-widgets-grid');
+        if (container) container.style.display = 'block';
+        
+        let widget = document.getElementById(`widget-${payload.queryId}`);
+        if (!widget) {
+            widget = document.createElement('div');
+            widget.id = `widget-${payload.queryId}`;
+            widget.className = 'card chart-card';
+            widget.style.cssText = 'flex: 1 1 400px; display: flex; flex-direction: column; resize: both; overflow: auto; min-width: 300px; min-height: 250px;';
+            
+            if (config.type === 'none') {
+                widget.innerHTML = `
+                    <div class="chart-header">
+                        <h2>📋 ${config.name ? config.name : `Scheduled Query: ${config.sql.substring(0, 30)}...`}</h2>
+                    </div>
+                    <div class="table-container" style="flex: 1; overflow-y: auto; height: 100%; min-height: 200px;">
+                        <table class="history-table">
+                            <thead id="widget-thead-${payload.queryId}"></thead>
+                            <tbody id="widget-tbody-${payload.queryId}"></tbody>
+                        </table>
+                    </div>
+                `;
+            } else {
+                widget.innerHTML = `
+                    <div class="chart-header">
+                        <h2>📈 ${config.name ? config.name : `Scheduled Query: ${config.sql.substring(0, 30)}...`}</h2>
+                    </div>
+                    <div class="chart-container" style="flex: 1; height: 100%; min-height: 200px; position: relative;">
+                        <canvas id="widget-canvas-${payload.queryId}"></canvas>
+                    </div>
+                `;
+            }
+            grid.appendChild(widget);
+        }
+        
+        if (config.type === 'none') {
+            const thead = document.getElementById(`widget-thead-${payload.queryId}`);
+            const tbody = document.getElementById(`widget-tbody-${payload.queryId}`);
+            
+            let headerHtml = '<tr>';
+            payload.columns.forEach(c => headerHtml += `<th>${c}</th>`);
+            headerHtml += '</tr>';
+            thead.innerHTML = headerHtml;
+            
+            let bodyHtml = '';
+            payload.rows.forEach(r => {
+                let rowHtml = '<tr>';
+                payload.columns.forEach(c => rowHtml += `<td>${r[c]}</td>`);
+                rowHtml += '</tr>';
+                bodyHtml += rowHtml;
+            });
+            tbody.innerHTML = bodyHtml;
+        } else {
+            window.scheduledCharts = window.scheduledCharts || {};
+            const canvas = document.getElementById(`widget-canvas-${payload.queryId}`);
+            if (!canvas) return;
+            
+            const rows = payload.rows;
+            let datasets = [];
+            const palette = ['#06b6d4', '#6366f1', '#a855f7', '#ef4444', '#f59e0b', '#2ECC71', '#3498DB', '#9B59B6', '#E74C3C', '#F1C40F'];
+            
+            const { xCol, yCol, colorCol } = config;
+            
+            if (colorCol) {
+                const groups = {};
+                rows.forEach(r => {
+                    const groupVal = r[colorCol];
+                    if (!groups[groupVal]) groups[groupVal] = [];
+                    groups[groupVal].push(r);
+                });
+                
+                let colorIdx = 0;
+                for (const [gName, gRows] of Object.entries(groups)) {
+                    gRows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+                    datasets.push({
+                        label: String(gName),
+                        data: gRows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
+                        borderColor: palette[colorIdx % palette.length],
+                        backgroundColor: palette[colorIdx % palette.length],
+                        borderWidth: 2,
+                        pointRadius: config.type === 'scatter' ? 4 : 2
+                    });
+                    colorIdx++;
+                }
+            } else {
+                rows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+                datasets.push({
+                    label: yCol,
+                    data: rows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
+                    borderColor: palette[0],
+                    backgroundColor: palette[0],
+                    borderWidth: 2,
+                    pointRadius: config.type === 'scatter' ? 4 : 2
+                });
+            }
+            
+            const firstXVal = rows.length > 0 ? rows[0][xCol] : null;
+            const xIsCategory = typeof firstXVal === 'string' && isNaN(Number(firstXVal));
+            
+            if (window.scheduledCharts[payload.queryId]) {
+                window.scheduledCharts[payload.queryId].data.datasets = datasets;
+                window.scheduledCharts[payload.queryId].options.scales.x.type = xIsCategory ? 'category' : 'linear';
+                window.scheduledCharts[payload.queryId].update('none');
+            } else {
+                const ctx = canvas.getContext('2d');
+                window.scheduledCharts[payload.queryId] = new Chart(ctx, {
+                    type: config.type === 'scatter' ? 'scatter' : (config.type === 'bar' ? 'bar' : 'line'),
+                    data: { datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: 'var(--text-primary)' } } },
+                        scales: {
+                            x: { type: xIsCategory ? 'category' : 'linear', ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } },
+                            y: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } }
+                        },
+                        animation: false
+                    }
+                });
+            }
         }
     };
 });
@@ -1543,3 +1723,19 @@ clearAlertLogsBtn.addEventListener('click', () => {
     updateAlertLogsBadge();
     renderAlertLogs();
 });
+
+// Theme / Background Color Picker Logic
+const bgColorPicker = document.getElementById('bg-color-picker');
+if (bgColorPicker) {
+    const savedBg = localStorage.getItem('rill_bg_color');
+    if (savedBg) {
+        document.documentElement.style.setProperty('--bg-primary', savedBg);
+        bgColorPicker.value = savedBg;
+    }
+    
+    bgColorPicker.addEventListener('input', (e) => {
+        const color = e.target.value;
+        document.documentElement.style.setProperty('--bg-primary', color);
+        localStorage.setItem('rill_bg_color', color);
+    });
+}
