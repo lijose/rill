@@ -139,7 +139,7 @@ class RillTable:
 
             effective_pk = None if self.mode == "append" else self.primary_key
 
-            # Perform C++ vectorized upsert via rill.compute.upsert
+            # Perform C++ vectorized upsert via rills.compute.upsert
             updated_table = upsert_table(
                 old_table=self._arrow_table,
                 new_table=batch_or_table,

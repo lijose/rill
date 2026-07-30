@@ -168,8 +168,8 @@ class DuckDBBridge:
                         try:
                             import datetime
                             iso_ts = datetime.datetime.now().isoformat()
-                            metrics_con.execute(f"CREATE TABLE IF NOT EXISTS {task.output_table} AS SELECT *, '{iso_ts}' AS insert_ts FROM {temp_view} WHERE 1=0")
-                            metrics_con.execute(f"INSERT INTO {task.output_table} SELECT *, '{iso_ts}' AS insert_ts FROM {temp_view}")
+                            metrics_con.execute(f'CREATE TABLE IF NOT EXISTS "{task.output_table}" AS SELECT *, \'{iso_ts}\' AS insert_ts FROM "{temp_view}" WHERE 1=0')
+                            metrics_con.execute(f'INSERT INTO "{task.output_table}" SELECT *, \'{iso_ts}\' AS insert_ts FROM "{temp_view}"')
                         finally:
                             metrics_con.unregister(temp_view)
 

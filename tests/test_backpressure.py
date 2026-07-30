@@ -4,7 +4,7 @@ Tests for connector backpressure and bounded memory buffers.
 
 import pytest
 import pyarrow as pa
-from rill import MemoryConnector, JSONStreamConnector
+from rills import MemoryConnector, JSONStreamConnector
 
 
 def test_memory_connector_backpressure_drop_oldest():

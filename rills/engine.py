@@ -30,8 +30,6 @@ class RillEngine:
         self,
         trigger_interval_ms: float = 100.0,
         duckdb_connection: Optional[Any] = None,
-        checkpoint_dir: Optional[Union[str, Path]] = None,
-        checkpoint_interval_seconds: float = 60.0,
         memory_budget_bytes: Optional[int] = None,
         memory_budget_mb: Optional[float] = None,
         on_memory_warning: Optional[Callable[[int, int], None]] = None,
@@ -45,8 +43,6 @@ class RillEngine:
         Args:
             trigger_interval_ms: Scheduled micro-batch interval in milliseconds (default: 100ms).
             duckdb_connection: Optional external DuckDB connection object. If None, uses in-memory DuckDB.
-            checkpoint_dir: Optional directory path for automated table snapshots.
-            checkpoint_interval_seconds: Frequency in seconds for saving state checkpoints to disk.
             memory_budget_bytes: Maximum memory threshold in bytes before emitting warning messages.
             memory_budget_mb: Maximum memory threshold in megabytes (convenience wrapper for `memory_budget_bytes`).
             on_memory_warning: Optional callback invoked when allocated memory crosses the budget threshold.
@@ -199,7 +195,7 @@ class RillEngine:
 
     def restore_checkpoints(self) -> List[str]:
         """
-        Restores table states from the configured `checkpoint_dir` if present.
+        [DEPRECATED] State checkpoints are no longer supported in this class.
         """
         return []
 
@@ -341,10 +337,7 @@ class RillEngine:
                         detail=traceback.format_exc()
                     )
 
-            # 2. Scheduled DuckDB SQL tasks
-            self.duckdb.run_due_tasks(t0)
-
-            # 3. Continuous Multi-stream Table Join tasks
+            # 2. Continuous Multi-stream Table Join tasks
             for jtask in self.join_tasks:
                 try:
                     j_t0 = time.perf_counter()
@@ -360,6 +353,9 @@ class RillEngine:
                         message=f"Join task '{task_name}' failed: {e}",
                         detail=traceback.format_exc()
                     )
+
+            # 3. Scheduled DuckDB SQL tasks
+            self.duckdb.run_due_tasks(t0)
 
             # 4. Enforce optional TTL retention and compaction on tables
             now_ts = time.time()
@@ -454,7 +450,6 @@ class RillEngine:
     def start(self) -> None:
         """
         Starts the background micro-batch processing loop and all attached connectors.
-        Automatically restores state checkpoints from disk if `checkpoint_dir` is configured.
         """
         with self._lock:
             if self._running:

@@ -27,7 +27,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from rill import (
+from rills import (
     RillEngine,
     MemoryConnector,
     RetentionPolicy,
@@ -159,7 +159,7 @@ def run_benchmark(
 
     # If incremental join requested, register stream join task
     if use_incremental_join:
-        from rill.compute.join import TableJoinTask
+        from rills.compute.join import TableJoinTask
         jtask = TableJoinTask(
             name="imp_click_join",
             left_table="clicks",

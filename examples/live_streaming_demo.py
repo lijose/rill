@@ -1,5 +1,5 @@
 """
-Live demonstration of The Rill Streaming Engine (`rill`).
+Live demonstration of The Rill Streaming Engine (`rills`).
 Simulates continuous high-frequency order events, performs vectorized upserts in PyArrow,
 runs scheduled DuckDB SQL transformations, tracks real-time system performance, and sinks outputs.
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pyarrow as pa
-from rill import (
+from rills import (
     RillEngine,
     MemoryConnector,
     ScheduledSQLTask,

@@ -3,8 +3,8 @@ Tests for zero-copy DuckDB SQL querying and scheduled SQL transformations over P
 """
 
 import pyarrow as pa
-from rill.engine import RillEngine
-from rill.compute.sql import ScheduledSQLTask
+from rills.engine import RillEngine
+from rills.compute.sql import ScheduledSQLTask
 
 
 def test_duckdb_zero_copy_query():

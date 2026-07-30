@@ -4,8 +4,8 @@ Tests for core RillEngine scheduling, step execution, and table update callbacks
 
 import time
 import pyarrow as pa
-from rill.engine import RillEngine
-from rill.connectors.memory import MemoryConnector
+from rills.engine import RillEngine
+from rills.connectors.memory import MemoryConnector
 
 
 def test_engine_step_and_callbacks():

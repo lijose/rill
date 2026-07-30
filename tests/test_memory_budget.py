@@ -4,7 +4,7 @@ Tests for RillEngine memory budget monitoring and warning emission.
 
 import pytest
 import pyarrow as pa
-from rill import RillEngine
+from rills import RillEngine
 
 
 def test_memory_budget_warning_and_callback():

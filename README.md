@@ -1,4 +1,4 @@
-# <img src="dashboard/public/logo.png" width="40" valign="middle" alt="Rill Logo"> Rill Streaming Engine (rill)
+# <img src="dashboard/public/logo.png" width="40" valign="middle" alt="Rill Logo"> Rill Streaming Engine (rills)
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyArrow](https://img.shields.io/badge/Powered%20by-PyArrow-orange.svg)](https://arrow.apache.org/)
@@ -66,7 +66,7 @@ Every table inside Rill automatically maintains two system timestamps (`pa.float
 - **Governed TTL**: By default, `RetentionPolicy(max_age_seconds=...)` uses `z_insert_ts` (`time_column="z_insert_ts"`) to accurately evict aged rows during each micro-batch tick.
 
 ### 3. Schema Primary Key & Mode Embedding
-Use `rill.schema([fields], primary_key="user_id", mode="append")` to embed governance properties directly inside PyArrow schema metadata (`schema.metadata[b"primary_key"]`). When a `RillTable` is initialized with an enriched schema, it automatically extracts its primary key and operating mode without manual boilerplate.
+Use `rills.schema([fields], primary_key="user_id", mode="append")` to embed governance properties directly inside PyArrow schema metadata (`schema.metadata[b"primary_key"]`). When a `RillTable` is initialized with an enriched schema, it automatically extracts its primary key and operating mode without manual boilerplate.
 
 ### 4. PyArrow Memory Budget Governance
 Configure `RillEngine(memory_budget_bytes=...)` or `memory_budget_mb=...` along with an optional `on_memory_warning` callback. During every micro-batch iteration (`step()`), Rill monitors `pa.total_allocated_bytes()` across all C++ memory pools and emits a `ResourceWarning` if the memory threshold is crossed.
@@ -189,7 +189,7 @@ Step 3: Open your browser to `http://localhost:3000`, enter `quack:127.0.0.1:949
 import time
 import pyarrow as pa
 import pyarrow.compute as pc
-from rill import RillEngine, MemoryConnector, ScheduledSQLTask, RetentionPolicy, schema
+from rills import RillEngine, MemoryConnector, ScheduledSQLTask, RetentionPolicy, schema
 
 # 1. Initialize Rill Engine with a 200ms micro-batch interval and 500 MB memory budget
 engine = RillEngine(
@@ -257,7 +257,7 @@ engine.stop()
 ### 3. Alerts & Observability
 
 ```python
-from rill import RillEngine, MemoryConnector
+from rills import RillEngine, MemoryConnector
 import traceback
 
 engine = RillEngine(

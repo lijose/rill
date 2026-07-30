@@ -9,7 +9,7 @@ Tests for Rill Engine performance and architecture optimizations:
 import time
 import pyarrow as pa
 import pytest
-from rill import (
+from rills import (
     RillEngine,
     MemoryConnector,
     ScheduledSQLTask,

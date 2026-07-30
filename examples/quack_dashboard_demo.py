@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pyarrow as pa
-from rill import (
+from rills import (
     RillEngine,
     MemoryConnector,
     ScheduledSQLTask,

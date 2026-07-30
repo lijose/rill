@@ -5,13 +5,13 @@ Tests for specific bug fixes — verifying regressions are prevented.
 import time
 import io
 import pyarrow as pa
-from rill.connectors.memory import MemoryConnector
-from rill.connectors.json_stream import JSONStreamConnector
+from rills.connectors.memory import MemoryConnector
+from rills.connectors.json_stream import JSONStreamConnector
 
 
 def test_engine_imports_successfully():
     """Engine module should import without IndentationError (was broken on line 16)."""
-    from rill.engine import RillEngine
+    from rills.engine import RillEngine
     engine = RillEngine(trigger_interval_ms=1000)
     assert engine is not None
     engine.stop()
@@ -97,7 +97,7 @@ def test_json_stream_newline_tracking():
 
 def test_file_connector_processed_files_bounded():
     """FileStreamConnector._processed_files should not grow unbounded."""
-    from rill.connectors.file import FileStreamConnector
+    from rills.connectors.file import FileStreamConnector
     connector = FileStreamConnector(
         target_table="test",
         watch_path="/tmp/nonexistent_test_dir_rill",
@@ -122,7 +122,7 @@ def test_file_connector_processed_files_bounded():
 
 def test_metrics_con_closed_on_stop():
     """metrics_con should be properly closed when engine stops."""
-    from rill.engine import RillEngine
+    from rills.engine import RillEngine
     engine = RillEngine(trigger_interval_ms=1000)
     
     # Verify connection works
@@ -142,7 +142,7 @@ def test_metrics_con_closed_on_stop():
 
 def test_engine_step_with_failing_connector():
     """Engine should not crash when a connector raises during step()."""
-    from rill.engine import RillEngine
+    from rills.engine import RillEngine
 
     class ExplodingConnector(MemoryConnector):
         def read_batch(self):
@@ -159,8 +159,8 @@ def test_engine_step_with_failing_connector():
 
 def disabled_output_streaming_json_export(tmp_path):
     """JSON export should work for large tables without OOM (streaming via to_batches)."""
-    from rill.output import OutputAPI
-    from rill.engine import RillEngine
+    from rills.output import OutputAPI
+    from rills.engine import RillEngine
     import json
 
     engine = RillEngine(trigger_interval_ms=1000)

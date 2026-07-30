@@ -2,7 +2,7 @@ import time
 import pytest
 import pyarrow as pa
 import duckdb
-from rill.engine import RillEngine
+from rills.engine import RillEngine
 
 
 def test_quack_metrics_registration():

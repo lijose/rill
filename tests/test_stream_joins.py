@@ -3,7 +3,7 @@ Tests for continuous multi-stream TableJoinTask (joining two streams and aggrega
 """
 
 import pyarrow as pa
-from rill import RillEngine, TableJoinTask
+from rills import RillEngine, TableJoinTask
 
 
 def test_table_join_task_without_aggregation():

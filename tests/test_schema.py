@@ -3,7 +3,7 @@ Tests for schema definition, metadata enrichment (`z_insert_ts`, `z_update_ts`),
 """
 
 import pyarrow as pa
-from rill import schema, extract_primary_key, RillTable, estimate_schema_row_size
+from rills import schema, extract_primary_key, RillTable, estimate_schema_row_size
 
 
 def test_schema_enrichment_and_primary_key_extract():

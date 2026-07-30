@@ -4,7 +4,7 @@ Tests for RillTable processing modes (`mode="snapshot"` vs `mode="append"`) and 
 
 import pytest
 import pyarrow as pa
-from rill import RillTable, RetentionPolicy, schema, extract_mode
+from rills import RillTable, RetentionPolicy, schema, extract_mode
 
 
 def test_append_mode_mandatory_ttl_validation():

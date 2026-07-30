@@ -4,7 +4,7 @@ Tests for Table TTL and Retention Policies (max_rows and max_age_seconds).
 
 import time
 import pyarrow as pa
-from rill import RillEngine, RillTable, RetentionPolicy
+from rills import RillEngine, RillTable, RetentionPolicy
 
 
 def test_retention_max_rows():

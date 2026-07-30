@@ -6,9 +6,9 @@ and severity/source routing.
 import time
 import duckdb
 import pyarrow as pa
-from rill.engine import RillEngine
-from rill.metrics import MetricsRegistry, create_alerts_table
-from rill.connectors.memory import MemoryConnector
+from rills.engine import RillEngine
+from rills.metrics import MetricsRegistry, create_alerts_table
+from rills.connectors.memory import MemoryConnector
 
 
 def test_record_alert_buffers_entries():

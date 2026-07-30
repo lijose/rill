@@ -4,7 +4,7 @@ Tests for Rill vectorized Delete-and-Insert (Upsert) compute kernels.
 
 import pytest
 import pyarrow as pa
-from rill.compute.upsert import upsert_table
+from rills.compute.upsert import upsert_table
 
 
 def test_upsert_single_primary_key():

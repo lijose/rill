@@ -5,9 +5,9 @@ Tests for Rill Input API connectors.
 import io
 from pathlib import Path
 import pyarrow as pa
-from rill.connectors.memory import MemoryConnector
-from rill.connectors.json_stream import JSONStreamConnector
-from rill.connectors.file import FileStreamConnector
+from rills.connectors.memory import MemoryConnector
+from rills.connectors.json_stream import JSONStreamConnector
+from rills.connectors.file import FileStreamConnector
 
 
 def test_memory_connector():

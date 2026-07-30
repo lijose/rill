@@ -488,18 +488,18 @@ class MetricsRegistry:
                 if hasattr(self, 'task_latencies'):
                     for task_name, lat in self.task_latencies.items():
                         t_name = f"task_metrics_{sanitize_name(task_name)}"
-                        con.execute(f"CREATE TABLE IF NOT EXISTS {t_name} (ts VARCHAR, latency_ms DOUBLE)")
-                        con.execute(f"INSERT INTO {t_name} VALUES (?, ?)", [ts, float(lat)])
-                        con.execute(f"DELETE FROM {t_name} WHERE ts < ?", [cutoff])
+                        con.execute(f'CREATE TABLE IF NOT EXISTS "{t_name}" (ts VARCHAR, latency_ms DOUBLE)')
+                        con.execute(f'INSERT INTO "{t_name}" VALUES (?, ?)', [ts, float(lat)])
+                        con.execute(f'DELETE FROM "{t_name}" WHERE ts < ?', [cutoff])
 
             # Write business metrics to individual tables
             for k, v in business_metrics.items():
                 try:
                     val = float(v)
                     b_name = f"business_metrics_{sanitize_name(k)}"
-                    con.execute(f"CREATE TABLE IF NOT EXISTS {b_name} (ts VARCHAR, value DOUBLE)")
-                    con.execute(f"INSERT INTO {b_name} VALUES (?, ?)", [ts, val])
-                    con.execute(f"DELETE FROM {b_name} WHERE ts < ?", [cutoff])
+                    con.execute(f'CREATE TABLE IF NOT EXISTS "{b_name}" (ts VARCHAR, value DOUBLE)')
+                    con.execute(f'INSERT INTO "{b_name}" VALUES (?, ?)', [ts, val])
+                    con.execute(f'DELETE FROM "{b_name}" WHERE ts < ?', [cutoff])
                 except (ValueError, TypeError):
                     pass
 

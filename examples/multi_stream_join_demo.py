@@ -1,7 +1,7 @@
 """
 Live demonstration of Multi-Stream Joins, Optional TTL Retention, and Checkpointing in Rill.
 Simulates two distinct input streams ('orders' and 'user_profiles'), continuously joins them
-in C++ memory (`TableJoinTask`), applies time/row retention, and checkpoints snapshots.
+in C++ memory (`TableJoinTask`), and applies time/row retention.
 """
 
 import time
@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pyarrow as pa
-from rill import (
+from rills import (
     RillEngine,
     MemoryConnector,
     TableJoinTask,
@@ -22,16 +22,9 @@ from rill import (
 
 def main():
     print("=" * 75)
-    print("🚀 Initializing Rill Engine with Multi-Stream Joins & Checkpointing...")
+    print("🚀 Initializing Rill Engine with Multi-Stream Joins...")
     print("=" * 75)
 
-    # checkpoint_dir = Path("/tmp/rill_multi_stream_checkpoints")
-    # engine = RillEngine(
-    #     trigger_interval_ms=200.0,
-    #     checkpoint_dir=checkpoint_dir,
-    #     checkpoint_interval_seconds=2.0
-    # )
-    # will add later
     engine = RillEngine(trigger_interval_ms=200.0)
     output_api = OutputAPI(engine)
 
