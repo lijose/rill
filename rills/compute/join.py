@@ -70,8 +70,8 @@ class TableJoinTask:
         applies optional group-by aggregations, and updates `output_table`.
         """
         # engine.get_table is removed to prevent exposing live db tables, access tables dict directly
-        left_tbl = engine.tables.get(self.left_table)
-        right_tbl = engine.tables.get(self.right_table)
+        left_tbl = engine._tables.get(self.left_table)
+        right_tbl = engine._tables.get(self.right_table)
 
         if left_tbl is None or right_tbl is None:
             return None
@@ -87,7 +87,7 @@ class TableJoinTask:
                 if self._last_processed_rows > left_arrow.num_rows:
                     self._last_processed_rows = 0
                 if self._last_processed_rows == left_arrow.num_rows:
-                    target_tbl = engine.tables.get(self.output_table)
+                    target_tbl = engine._tables.get(self.output_table)
                     return target_tbl.to_arrow() if target_tbl else None
 
                 left_to_join = left_arrow.slice(self._last_processed_rows)

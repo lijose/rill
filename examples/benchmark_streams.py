@@ -33,6 +33,7 @@ from rills import (
     RetentionPolicy,
     schema as rill_schema,
 )
+from rills.compute.sql import ScheduledSQLTask
 
 def generate_stream_batches(
     num_products: int,
@@ -245,22 +246,34 @@ def run_benchmark(
         LIMIT 10
     """
 
-    print("\n🔍 Executing DuckDB Zero-Copy SQL Window Queries (`WHERE system_ts >= now - 10m`)...")
+    print("\n🔍 Executing Scheduled SQL Tasks (`WHERE system_ts >= now - 10m`)...")
     
-    # Query Top 10 Impressions
-    t_sql_imp_start = time.perf_counter()
-    top_impressions = engine.duckdb.query(sql_impressions)
-    t_sql_imp_end = time.perf_counter()
-    sql_imp_ms = (t_sql_imp_end - t_sql_imp_start) * 1000.0
+    task_imp = ScheduledSQLTask(
+        name="bench_top_impressions",
+        query=sql_impressions,
+        interval_seconds=0.01,
+        output_table="top_impressions"
+    )
+    task_click = ScheduledSQLTask(
+        name="bench_top_clicks",
+        query=sql_clicks,
+        interval_seconds=0.01,
+        output_table="top_clicks"
+    )
+    engine.add_sql_task(task_imp)
+    engine.add_sql_task(task_click)
+    
+    # Step once to execute tasks
+    engine.step()
 
-    # Query Top 10 Clicks
-    t_sql_click_start = time.perf_counter()
-    top_clicks = engine.duckdb.query(sql_clicks)
-    t_sql_click_end = time.perf_counter()
-    sql_click_ms = (t_sql_click_end - t_sql_click_start) * 1000.0
+    sql_imp_ms = engine.metrics.task_latencies.get("bench_top_impressions", 0.0) if hasattr(engine.metrics, "task_latencies") else 0.0
+    sql_click_ms = engine.metrics.task_latencies.get("bench_top_clicks", 0.0) if hasattr(engine.metrics, "task_latencies") else 0.0
 
-    print(f"   ⚡ Top 10 Impressions Query Latency : {sql_imp_ms:.2f} ms")
-    print(f"   ⚡ Top 10 Clicks Query Latency      : {sql_click_ms:.2f} ms")
+    print(f"   ⚡ Top 10 Impressions Task Latency : {sql_imp_ms:.2f} ms")
+    print(f"   ⚡ Top 10 Clicks Task Latency      : {sql_click_ms:.2f} ms")
+
+    top_impressions = engine._tables["top_impressions"].to_arrow() if "top_impressions" in engine._tables else None
+    top_clicks = engine._tables["top_clicks"].to_arrow() if "top_clicks" in engine._tables else None
 
     # Display Top 10 Results
     imp_rows = top_impressions.to_pylist() if top_impressions else []
@@ -285,8 +298,8 @@ def run_benchmark(
     # 7. Measure Vectorized TTL Retention Pruning Bottleneck
     print("\n🧹 Measuring Vectorized TTL Pruning Overhead (C++ pyarrow.compute.filter over all rows)...")
     t_ttl_start = time.perf_counter()
-    engine.tables["impressions"].apply_retention(current_time=now_ts)
-    engine.tables["clicks"].apply_retention(current_time=now_ts)
+    engine._tables["impressions"].apply_retention(current_time=now_ts)
+    engine._tables["clicks"].apply_retention(current_time=now_ts)
     t_ttl_end = time.perf_counter()
     ttl_prune_ms = (t_ttl_end - t_ttl_start) * 1000.0
     print(f"   🧹 TTL Retention Pruning Latency: {ttl_prune_ms:.2f} ms across {total_records:,} rows")

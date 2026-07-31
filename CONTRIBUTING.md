@@ -23,7 +23,7 @@ First off, thank you for considering contributing to **Rill**! We welcome bug re
    ```
 
 4. **Run the Test Suite**:
-   We maintain strict test coverage across all features (Vectorized Upserts, Backpressure, Checkpointing, DuckDB SQL, and Multi-Stream Joins). Ensure all tests pass before committing:
+   We maintain strict test coverage across all features (Vectorized Upserts, Backpressure, DuckDB SQL, and Multi-Stream Joins). Ensure all tests pass before committing:
    ```bash
    pytest tests/ -v
    ```

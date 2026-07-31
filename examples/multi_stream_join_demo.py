@@ -1,5 +1,5 @@
 """
-Live demonstration of Multi-Stream Joins, Optional TTL Retention, and Checkpointing in Rill.
+Live demonstration of Multi-Stream Joins and Optional TTL Retention in Rill.
 Simulates two distinct input streams ('orders' and 'user_profiles'), continuously joins them
 in C++ memory (`TableJoinTask`), and applies time/row retention.
 """
@@ -66,6 +66,18 @@ def main():
     )
     engine.add_join_task(join_task)
 
+    # Pre-register orders_enriched so scheduled SQL doesn't fail on first tick
+    enriched_schema = pa.schema([
+        ("order_id", pa.int64()),
+        ("user_id", pa.int64()),
+        ("amount", pa.float64()),
+        ("category", pa.string()),
+        ("name", pa.string()),
+        ("region", pa.string()),
+        ("tier", pa.string())
+    ])
+    engine.register_table("orders_enriched", schema=enriched_schema, primary_key="order_id")
+
     # 5. Attach Scheduled SQL Task computing regional revenue summary every 1 second
     sql_task = ScheduledSQLTask(
         name="regional_revenue_job",
@@ -84,11 +96,7 @@ def main():
     )
     engine.add_sql_task(sql_task)
 
-    # Subscribe to live notifications on our aggregated regional revenue table
-    def on_regional_summary(tbl_name, arrow_tbl):
-        print(f"\n[Callback Notification] Aggregated Table '{tbl_name}' updated! ({arrow_tbl.num_rows} rows)")
-
-    output_api.subscribe_table("regional_revenue", on_regional_summary)
+    # (Subscription removed per D2 API cleanup)
 
     # Start engine loop
     engine.start()
@@ -116,7 +124,7 @@ def main():
         time.sleep(1.3)  # Wait for join tick + 1s SQL task
 
         print("\n--- Current Alerts & Telemetry in Metrics DB ---")
-        alerts_df = engine.metrics_con.execute("SELECT ts, severity, message FROM rill_alerts LIMIT 5").fetchall()
+        alerts_df = engine.query_metrics("SELECT ts, severity, message FROM rill_alerts LIMIT 5").to_pylist()
         if alerts_df:
             print(alerts_df)
         else:
@@ -139,7 +147,7 @@ def main():
         time.sleep(1.3)
 
         print("\n--- Final Metrics Summary ---")
-        metrics_df = engine.metrics_con.execute("SELECT ts, metric_name, value FROM rill_metrics ORDER BY ts DESC LIMIT 10").fetchall()
+        metrics_df = engine.query_metrics("SELECT ts, metric_name, value FROM rill_metrics ORDER BY ts DESC LIMIT 10").to_pylist()
         print(metrics_df)
 
     finally:

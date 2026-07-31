@@ -53,7 +53,7 @@ def test_scheduled_sql_task_trigger():
     # Execute a step right away - since last_run_time is 0, task should run immediately
     engine.step()
 
-    summary_tbl = engine.tables.get("category_summary")
+    summary_tbl = engine._tables.get("category_summary")
     assert summary_tbl is not None
     assert summary_tbl.num_rows == 2
 

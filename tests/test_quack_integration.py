@@ -21,7 +21,6 @@ def test_quack_metrics_registration():
     assert "total_memory" in schema_names
     assert "pyarrow_allocated_bytes" in schema_names
     assert "pyarrow_max_memory" in schema_names
-    assert "business_metrics" in schema_names
 
 
 def test_quack_server_startup_and_stop():

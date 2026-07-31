@@ -84,7 +84,7 @@ class DuckDBBridge:
         Also registers/updates the special 'rill_metrics' system/performance metrics view.
         """
         with self._lock:
-            for name, rill_table in self.engine.tables.items():
+            for name, rill_table in self.engine._tables.items():
                 arrow_tab = rill_table.to_arrow()
                 if arrow_tab is not None:
                     try:
@@ -101,7 +101,7 @@ class DuckDBBridge:
 
             # Register a rill_tables view so remote clients can discover tables
             try:
-                table_names = list(self.engine.tables.keys())
+                table_names = list(self.engine._tables.keys())
                 table_names.extend(["rill_metrics", "rill_alerts", "rill_tables"])
                 tables_pa = pa.table({"table_name": pa.array(table_names, type=pa.string())})
                 self.con.register("rill_tables", tables_pa)

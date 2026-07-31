@@ -5,7 +5,6 @@ files_to_update = [
     'tests/test_alerts_pipeline.py',
     'tests/test_backpressure.py',
     'tests/test_bug_fixes.py',
-    'tests/test_checkpoint.py',
     'tests/test_connectors.py',
     'tests/test_duckdb_sql.py',
     'tests/test_engine.py',

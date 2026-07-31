@@ -202,11 +202,6 @@ class MetricsRegistry:
         self._batch_count: int = 0
         self._last_tick_time: float = time.perf_counter()
 
-        # Business logic metric evaluators: name -> callable(engine) -> value
-        self._business_evaluators: Dict[str, Callable[['RillEngine'], Any]] = {}
-        # Cached latest business metric results
-        self.business_metrics: Dict[str, Any] = {}
-
         # Alert buffer (flushed to DuckDB during write_to_duckdb)
         self._alert_buffer: List[AlertEntry] = []
 
@@ -245,29 +240,6 @@ class MetricsRegistry:
             logger.warning(log_msg)
         else:
             logger.info(log_msg)
-
-    # ── Business Metrics ─────────────────────────────────────────────────
-
-    def register_metric(self, name: str, evaluator: Callable[['RillEngine'], Any]) -> None:
-        """
-        Registers a custom business metric to be calculated during each trigger interval.
-
-        Args:
-            name: Metric identifier (e.g., 'real_time_revenue_by_tier').
-            evaluator: Function taking `RillEngine` and returning a scalar or table summary.
-        """
-        with self._lock:
-            self._business_evaluators[name] = evaluator
-
-    def unregister_metric(self, name: str) -> None:
-        """
-        Removes a registered custom business metric.
-        """
-        with self._lock:
-            if name in self._business_evaluators:
-                del self._business_evaluators[name]
-            if name in self.business_metrics:
-                del self.business_metrics[name]
 
     def record_step(self, records_in_batch: int, latency_ms: float) -> None:
         """
@@ -317,30 +289,6 @@ class MetricsRegistry:
             else:
                 self.task_latencies[task_name] = (self.task_latencies[task_name] * 0.9) + (latency_ms * 0.1)
 
-    def evaluate_business_metrics(self, engine: 'RillEngine') -> Dict[str, Any]:
-        """
-        Evaluates all registered business logic evaluators against the live engine state.
-        """
-        with self._lock:
-            evaluators = dict(self._business_evaluators)
-
-        results = {}
-        for name, evaluator in evaluators.items():
-            try:
-                results[name] = evaluator(engine)
-            except Exception as e:
-                results[name] = f"Error evaluating metric: {e}"
-                self.record_alert(
-                    severity="warning",
-                    source=f"metrics.business.{name}",
-                    message=f"Business metric '{name}' evaluation failed: {e}",
-                    detail=traceback.format_exc()
-                )
-
-        with self._lock:
-            self.business_metrics.update(results)
-            return dict(self.business_metrics)
-
     def get_system_metrics(self, engine: Optional['RillEngine'] = None) -> Dict[str, Any]:
         """
         Returns a dictionary of all tracked system performance indicators and table row counts.
@@ -348,7 +296,7 @@ class MetricsRegistry:
         with self._lock:
             table_counts = {}
             if engine is not None:
-                for name, table in engine.tables.items():
+                for name, table in engine._tables.items():
                     table_counts[name] = table.num_rows
 
             return {
@@ -362,12 +310,9 @@ class MetricsRegistry:
 
     def get_all_metrics(self, engine: Optional['RillEngine'] = None) -> Dict[str, Any]:
         """
-        Returns a combined dictionary containing system metrics and live business metrics.
+        Returns a dictionary containing system metrics.
         """
-        metrics = self.get_system_metrics(engine)
-        with self._lock:
-            metrics["business_metrics"] = dict(self.business_metrics)
-        return metrics
+        return self.get_system_metrics(engine)
 
     def get_metrics_arrow_table(self, engine: Optional['RillEngine'] = None) -> pa.Table:
         """
@@ -382,10 +327,6 @@ class MetricsRegistry:
         pyarrow_allocated = pa.total_allocated_bytes()
         pyarrow_max = pa.default_memory_pool().max_memory()
 
-        business_metrics = all_metrics.get("business_metrics", {})
-        business_json = json.dumps({k: v for k, v in business_metrics.items()
-                                     if isinstance(v, (int, float, str, bool, type(None)))})
-
         return pa.table({
             "timestamp": [time.time()],
             "cpu_usage": [float(cpu_usage)],
@@ -398,7 +339,6 @@ class MetricsRegistry:
             "last_batch_latency_ms": [float(all_metrics.get("last_batch_latency_ms", 0.0))],
             "avg_batch_latency_ms": [float(all_metrics.get("avg_batch_latency_ms", 0.0))],
             "records_per_second": [float(all_metrics.get("records_per_second", 0.0))],
-            "business_metrics": [business_json],
         })
 
     def write_to_duckdb(self, con: 'duckdb.DuckDBPyConnection', engine: 'RillEngine') -> None:
@@ -458,13 +398,6 @@ class MetricsRegistry:
                 for task_name, lat in self.task_latencies.items():
                     metrics_list.append((ts, f"task_latency_ms_{task_name}", float(lat)))
 
-        business_metrics = all_metrics.get("business_metrics", {})
-        for k, v in business_metrics.items():
-            try:
-                metrics_list.append((ts, k, float(v)))
-            except (ValueError, TypeError):
-                pass
-
         if not metrics_list:
             return
 
@@ -491,17 +424,6 @@ class MetricsRegistry:
                         con.execute(f'CREATE TABLE IF NOT EXISTS "{t_name}" (ts VARCHAR, latency_ms DOUBLE)')
                         con.execute(f'INSERT INTO "{t_name}" VALUES (?, ?)', [ts, float(lat)])
                         con.execute(f'DELETE FROM "{t_name}" WHERE ts < ?', [cutoff])
-
-            # Write business metrics to individual tables
-            for k, v in business_metrics.items():
-                try:
-                    val = float(v)
-                    b_name = f"business_metrics_{sanitize_name(k)}"
-                    con.execute(f'CREATE TABLE IF NOT EXISTS "{b_name}" (ts VARCHAR, value DOUBLE)')
-                    con.execute(f'INSERT INTO "{b_name}" VALUES (?, ?)', [ts, val])
-                    con.execute(f'DELETE FROM "{b_name}" WHERE ts < ?', [cutoff])
-                except (ValueError, TypeError):
-                    pass
 
             con.commit()
         except Exception:

@@ -90,7 +90,7 @@ Define Scheduled SQL Tasks (`engine.add_dashboard_scheduled_query(...)`) to dyna
 Rill includes a full-stack **alerts and observability pipeline** that captures engine exceptions, user-pushed alerts, and threshold-based rule triggers into a persistent `rill_alerts` DuckDB table — visible in real-time on the dashboard.
 
 - **Structured Logging**: Every module uses `logging.getLogger(__name__)` with proper Python logging. No silent `except: pass` blocks — all errors are logged and recorded.
-- **Server-Side Alert Recording**: All internal engine exceptions (connector failures, SQL task errors, memory budget warnings, business metric evaluation failures) are automatically recorded as structured alerts with severity (`error`, `warning`, `info`), source component, and traceback detail.
+- **Server-Side Alert Recording**: All internal engine exceptions (connector failures, SQL task errors, memory budget warnings) are automatically recorded as structured alerts with severity (`error`, `warning`, `info`), source component, and traceback detail.
 - **User-Facing Alert API**: Push custom alerts directly from application code:
   ```python
   # Primary method with full control
@@ -154,7 +154,14 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 
 ### Installation
 
-Install Rill locally or in editable mode with development & connector dependencies:
+Install `rills` directly from PyPI using pip:
+
+```bash
+pip install rills
+```
+
+**Development / Source Installation:**
+If you want to contribute or run the dashboard/examples directly from the source code:
 
 ```bash
 git clone https://github.com/lijose/rill.git
@@ -211,7 +218,7 @@ engine.register_table("orders", schema=orders_schema)
 # 3. Schedule a live dashboard query to compute business KPIs
 engine.add_dashboard_scheduled_query(
     name="Max Order Amount",
-    query="SELECT MAX(amount) as max_amount FROM orders",
+    sql="SELECT MAX(amount) as max_amount FROM orders",
     interval_seconds=1.0,
     chart_type="bar",
     x_col="ts",
@@ -235,18 +242,17 @@ engine.add_sql_task(sql_task)
 engine.start()
 
 # Push incoming events directly to connector
-batch = pa.RecordBatch.from_pydict({
+connector.push({
     "order_id": [1, 2, 3],
     "user_tier": ["Gold", "Silver", "Gold"],
     "amount": [100.50, 45.00, 250.00]
-}, schema=orders_schema)
-connector.push(batch)
+})
 
 time.sleep(1.2)
 
 # The live data is fully isolated to prevent locking issues. 
-# Telemetry, Scheduled Queries, and Alerts can be read safely via metrics_con:
-alerts = engine.metrics_con.execute("SELECT * FROM rill_alerts LIMIT 5").df()
+# Telemetry, Scheduled Queries, and Alerts can be read safely via query_metrics:
+alerts = engine.query_metrics("SELECT * FROM rill_alerts LIMIT 5").to_pylist()
 print("Recent System Alerts:\n", alerts)
 
 engine.stop()
@@ -295,27 +301,24 @@ engine.start()
 Alerts are stored in the `rill_alerts` DuckDB table and can also be queried directly:
 
 ```python
-results = engine.metrics_con.execute("""
+results = engine.query_metrics("""
     SELECT ts, severity, source, message 
     FROM rill_alerts 
     WHERE severity = 'error' 
     ORDER BY ts DESC LIMIT 10
-""").fetchall()
+""").to_pylist()
 ```
 
 ---
 
-## 🌟 Advanced Example: Multi-Stream Joins
+## 🌟 Advanced Examples
 
-See our complete end-to-end multi-stream demo inside `examples/`:
+See our complete end-to-end demos inside `examples/`:
 
-```bash
-python3 examples/multi_stream_join_demo.py
-```
-
-This demo illustrates:
-- Joining a live `user_profiles` table with a continuous `orders` stream into `orders_enriched`.
-- Calculating regional revenue aggregations via DuckDB SQL every second.
+- **`live_streaming_demo.py`**: Simulates continuous high-frequency order events, performs vectorized upserts in PyArrow, runs scheduled DuckDB SQL transformations, tracks real-time system performance, and sinks outputs.
+- **`multi_stream_join_demo.py`**: Joining a live `user_profiles` table with a continuous `orders` stream into `orders_enriched`. Calculating regional revenue aggregations via DuckDB SQL every second.
+- **`benchmark_streams.py`**: Evaluates performance and identifies bottlenecks in high-frequency streaming analytics across 1K, 10K, and 1M products.
+- **`quack_dashboard_demo.py`**: Starts Rill with a background Quack server enabled, simulating dynamic memory allocation variations for dashboard visualization.
 
 ---
 
@@ -339,14 +342,16 @@ Test coverage includes:
 - **`test_retention.py`** — Max rows and max age TTL pruning
 - **`test_table_modes.py`** — Snapshot vs append mode behavior
 - **`test_upsert.py`** — Single/composite primary key upserts, append mode
-- **`test_metrics.py`** — System and business metrics tracking
+- **`test_metrics.py`** — System metrics tracking
 - **`test_memory_budget.py`** — Memory budget warnings and callbacks
+- **`test_optimizations.py`** — Benchmark optimizations, dictionary encoding
+- **`test_quack_integration.py`** — Quack background server testing
 
 ---
 
 ## 🤝 Contributing
 
-We welcome community contributions! Please review our [CONTRIBUTING.md](CONTRIBUTING.md) guide and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening pull requests or reporting issues.
+We welcome community contributions! Please review our [CONTRIBUTING.md](CONTRIBUTING.md) guide before opening pull requests or reporting issues.
 
 ## 📄 License
 

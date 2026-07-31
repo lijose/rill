@@ -60,11 +60,7 @@ def main():
     )
     engine.add_sql_task(sql_task)
 
-    # 6. Subscribe callback to notifications when 'tier_revenue' table updates
-    def on_revenue_updated(tbl_name, arrow_table):
-        print(f"\n[Callback Notification] Table '{tbl_name}' updated! Rows: {arrow_table.num_rows}")
-
-    output_api.subscribe_table("tier_revenue", on_revenue_updated)
+    # 6. (Subscription removed per D2 API cleanup)
 
     # 7. Start Engine Background Loop
     engine.start()
@@ -83,7 +79,7 @@ def main():
         time.sleep(1.2)  # Allow micro-batches and 1s SQL task to execute
 
         print("\n--- Current Alerts in Metrics DB ---")
-        alerts_df = engine.metrics_con.execute("SELECT ts, severity, message FROM rill_alerts LIMIT 5").fetchall()
+        alerts_df = engine.query_metrics("SELECT ts, severity, message FROM rill_alerts LIMIT 5").to_pylist()
         print(alerts_df)
 
         print("\n📥 Pushing upsert & new events (Updating order_id 2 to $99.00, adding order 4)...")
@@ -97,7 +93,7 @@ def main():
         time.sleep(1.2)
 
         print("\n--- Updated Alerts in Metrics DB ---")
-        alerts_df = engine.metrics_con.execute("SELECT ts, severity, message FROM rill_alerts LIMIT 5").fetchall()
+        alerts_df = engine.query_metrics("SELECT ts, severity, message FROM rill_alerts LIMIT 5").to_pylist()
         print(alerts_df)
 
         print("\n--- Real-time Engine Metrics & Business Formulas ---")
@@ -109,7 +105,7 @@ def main():
 
         # 8. Test ad-hoc zero-copy metrics query
         print("\n🔍 Running ad-hoc DuckDB zero-copy query over 'rill_alerts'...")
-        high_value = engine.metrics_con.execute("SELECT * FROM rill_alerts ORDER BY ts DESC LIMIT 2").fetchall()
+        high_value = engine.query_metrics("SELECT * FROM rill_alerts ORDER BY ts DESC LIMIT 2").to_pylist()
         print(high_value)
 
     finally:

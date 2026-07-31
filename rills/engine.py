@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class RillEngine:
     """
     Core engine managing live PyArrow tables, active input connectors, scheduled DuckDB SQL tasks,
-    multi-stream join tasks, optional checkpoints, and system performance metrics.
+    multi-stream join tasks, and system performance metrics.
     Runs a scheduled micro-batch loop that ingests buffered stream data, performs vectorized
     upserts, executes due SQL/join transformations, enforces TTL retention, and updates metrics.
     """
@@ -53,7 +53,7 @@ class RillEngine:
         """
         self.trigger_interval_ms = trigger_interval_ms
         self.auto_compact_chunks = auto_compact_chunks
-        self.tables: Dict[str, RillTable] = {}
+        self._tables: Dict[str, RillTable] = {}
         self.connectors: List[BaseConnector] = []
         self.sql_tasks: List[ScheduledSQLTask] = []
         self.join_tasks: List['TableJoinTask'] = []
@@ -103,16 +103,8 @@ class RillEngine:
         """
         with self._lock:
             table = RillTable(name=name, schema=schema, primary_key=primary_key, retention_policy=retention_policy, mode=mode)
-            self.tables[name] = table
+            self._tables[name] = table
             return table
-
-    # Commented out as we are not exposing live db tables currently
-    # def get_table(self, name: str) -> Optional[RillTable]:
-    #     """
-    #     Retrieves a registered RillTable by name.
-    #     """
-    #     with self._lock:
-    #         return self.tables.get(name)
 
     def get_or_create_table(
         self,
@@ -126,9 +118,9 @@ class RillEngine:
         Retrieves a table if registered, otherwise creates and registers it.
         """
         with self._lock:
-            if name not in self.tables:
+            if name not in self._tables:
                 return self.register_table(name, schema=schema, primary_key=primary_key, retention_policy=retention_policy, mode=mode)
-            return self.tables[name]
+            return self._tables[name]
 
     def compact_all(self, max_chunks: Optional[int] = None) -> None:
         """
@@ -136,7 +128,7 @@ class RillEngine:
         """
         threshold = max_chunks if max_chunks is not None else self.auto_compact_chunks
         with self._lock:
-            for tbl in self.tables.values():
+            for tbl in self._tables.values():
                 try:
                     tbl.compact(max_chunks=threshold)
                 except Exception:
@@ -193,39 +185,27 @@ class RillEngine:
             if task in self.join_tasks:
                 self.join_tasks.remove(task)
 
-    def restore_checkpoints(self) -> List[str]:
-        """
-        [DEPRECATED] State checkpoints are no longer supported in this class.
-        """
-        return []
-
     def subscribe(self, table_name: str, callback: Callable[[str, pa.Table], None]) -> None:
         """
+        Internal use — not part of the public output boundary.
         Subscribes a callback to live updates on a specific table.
         """
         table = self.get_or_create_table(table_name)
         table.subscribe(callback)
-
-    # Commented out as business metrics operate on live db tables
-    # def register_business_metric(self, name: str, evaluator: Callable[['RillEngine'], Any]) -> None:
-    #     """
-    #     Registers a custom formula/metric to be calculated during each micro-batch tick.
-    #     """
-    #     self.metrics.register_metric(name, evaluator)
-
-    # Commented out as we are not exposing live db tables currently
-    # def query_sql(self, sql: str) -> pa.Table:
-    #     """
-    #     Executes an ad-hoc DuckDB SQL query against any registered PyArrow tables.
-    #     Returns zero-copy PyArrow Table.
-    #     """
-    #     return self.duckdb.query(sql)
 
     def get_metrics(self) -> Dict[str, Any]:
         """
         Returns comprehensive system and live business logic metrics.
         """
         return self.metrics.get_all_metrics(self)
+
+    def query_metrics(self, sql: str) -> pa.Table:
+        """
+        Executes a read-only SQL query against the metrics database.
+        Note: The underlying connection is available at `metrics_con`, but this method
+        is the preferred interface for reading metrics.
+        """
+        return self.metrics_con.execute(sql).fetch_arrow_table()
 
     # ── User-Facing Alert API ────────────────────────────────────────────
 
@@ -359,7 +339,7 @@ class RillEngine:
 
             # 4. Enforce optional TTL retention and compaction on tables
             now_ts = time.time()
-            for tbl in self.tables.values():
+            for tbl in self._tables.values():
                 try:
                     tbl.apply_retention(current_time=now_ts)
                     if self.auto_compact_chunks > 0:
@@ -374,7 +354,6 @@ class RillEngine:
                     )
 
             # 5. Live business logic evaluation and metrics publishing
-            self.metrics.evaluate_business_metrics(self)
             self.metrics.write_to_duckdb(self.metrics_con, self)
 
             # Maintain rill_tables catalog in metrics_con for Quack serving
@@ -383,16 +362,10 @@ class RillEngine:
                 
                 # Also include metric tables in the catalog list
                 table_names.extend(["rill_metrics", "rill_alerts", "rill_dashboard_queries"])
-                # Commented out as we are not exposing live db tables currently
-                # for t in self.sql_tasks:
-                #     if t.output_table:
-                #         table_names.append(t.output_table)
                 import re
                 def sanitize(n): return re.sub(r'\W+', '_', n).strip('_').lower()
                 for task_name in self.metrics.task_latencies.keys() if hasattr(self.metrics, 'task_latencies') else []:
                     table_names.append(f"task_metrics_{sanitize(task_name)}")
-                for metric_name in self.metrics.business_metrics.keys():
-                    table_names.append(f"business_metrics_{sanitize(metric_name)}")
                 
                 # Maintain rill_tables
                 self.metrics_con.execute("CREATE OR REPLACE TABLE rill_tables (table_name VARCHAR)")
@@ -417,7 +390,7 @@ class RillEngine:
         allocated = pa.total_allocated_bytes()
         if allocated == 0:
             with self._lock:
-                allocated = sum(tbl.to_arrow().nbytes for tbl in self.tables.values() if tbl.to_arrow() is not None)
+                allocated = sum(tbl.to_arrow().nbytes for tbl in self._tables.values() if tbl.to_arrow() is not None)
 
         exceeded = self.memory_budget_bytes is not None and allocated > self.memory_budget_bytes
         if exceeded:
@@ -484,13 +457,14 @@ class RillEngine:
             self._thread = None
 
         if self._quack_thread is not None:
+            try:
+                # Signal the Quack server to stop via the main connection
+                self.metrics_con.execute("LOAD quack;")
+                self.metrics_con.execute("CALL quack_stop(?);", [self.quack_address])
+            except Exception:
+                logger.exception("Error stopping quack server")
+            
             if self._quack_thread.is_alive():
-                try:
-                    # Signal the Quack server to stop via the main connection
-                    self.metrics_con.execute("LOAD quack;")
-                    self.metrics_con.execute("CALL quack_stop(?);", [self.quack_address])
-                except Exception:
-                    logger.exception("Error stopping quack server")
                 self._quack_thread.join(timeout=timeout)
             self._quack_thread = None
 
@@ -555,4 +529,4 @@ class RillEngine:
                 time.sleep(sleep_ms / 1000.0)
 
     def __repr__(self) -> str:
-        return f"<RillEngine(trigger_interval_ms={self.trigger_interval_ms}, running={self._running}, tables={list(self.tables.keys())})>"
+        return f"<RillEngine(trigger_interval_ms={self.trigger_interval_ms}, running={self._running}, tables={list(self._tables.keys())})>"

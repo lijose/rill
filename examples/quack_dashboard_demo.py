@@ -65,11 +65,7 @@ def main():
     )
     engine.add_sql_task(sql_task)
 
-    # 5. Register custom business formulas evaluated every micro-batch tick
-    # Commented out as we are not accessing the live db tables currently
-    # import pyarrow.compute as pc
-
-    # 6. Add Dashboard Scheduled Queries (Metrics DB)
+    # 5. Add Dashboard Scheduled Queries (Metrics DB)
     engine.add_dashboard_scheduled_query(
         name="System CPU Trend",
         sql ="select ts, value as cpu from remote_db.rill_metrics where metric_name ='cpu_usage' ORDER BY ts DESC LIMIT 60",
@@ -107,16 +103,7 @@ def main():
         color_col="user_tier"
     )
 
-    # engine.add_dashboard_scheduled_query(
-    #     name="Total Revenue ($)",
-    #     sql="SELECT ts, value FROM remote_db.business_metrics_total_revenue____ ORDER BY ts DESC LIMIT 60",
-    #     interval_seconds=1.0,
-    #     chart_type="line",
-    #     x_col="ts",
-    #     y_col="value"
-    # )
-
-    # 7. Start Engine Background Loop & Quack Thread
+    # 6. Start Engine Background Loop & Quack Thread
     engine.start()
     print("\n✅ Rill Engine is running!")
     print("📡 Quack Server exposed at: quack:127.0.0.1:9494")
