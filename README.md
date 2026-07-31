@@ -52,7 +52,7 @@ From raw data ingestion to complex multi-stream joins, aggregations, scheduled S
 
 ---
 
-## ✨ Key Features & Governance
+## Key Features & Governance
 
 ### 1. Table Processing Modes (`snapshot` vs `append`) & Mandatory TTL
 - **Snapshot Mode (`mode="snapshot"` or `"upsert"`)**: Maintains unique state tables by atomically replacing matching rows when `primary_key` is defined (`pc.is_in` / `left anti` join). TTL (`RetentionPolicy`) is optional.
@@ -102,12 +102,12 @@ Rill includes a full-stack **alerts and observability pipeline** that captures e
   engine.warn("High latency detected on orders")     # severity="warning"
   engine.error("Database connection failed")          # severity="error"
   ```
-- **Dashboard Integration**: All alerts (engine, user, and rule-based) appear in the Alert Logs view with severity badges (🔴 Error, 🟡 Warning, 🔵 Info), source badges (👤 User, ⚙️ Engine, ⚡ Rule), filter toggles, and toast notifications.
+- **Dashboard Integration**: All alerts (engine, user, and rule-based) appear in the Alert Logs view with severity badges (🔴 Error, 🟡 Warning, 🔵 Info), source badges (User, Engine, Rule), filter toggles, and toast notifications.
 - **Automatic Retention**: Alerts older than 1 hour are automatically pruned during each metrics flush cycle.
 
 ---
 
-## 📊 Live Business Intelligence & Quack Dashboard
+## Live Business Intelligence & Quack Dashboard
 
 Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & System Monitoring Dashboard** built with Node.js, WebSocket Quack Bridge (`quack_worker.py`), and Chart.js.
 
@@ -115,15 +115,15 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                        NODE.JS / BROWSER DASHBOARD                              │
 │  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │ 💎 Key Business Intelligence & Scheduled Queries (Live Streaming)         │  │
+│  │ Key Business Intelligence & Scheduled Queries (Live Streaming)         │  │
 │  │  [ max_order_amount ($): $497.34 ]  [ total_revenue ($): $13,025.21 ]     │  │
 │  │  [ cancelled_ratio: 26.5% ]                                               │  │
-│  │  📈 Scheduled Line & Bar Charts evaluating Live SQL Data                  │  │
+│  │  Scheduled Line & Bar Charts evaluating Live SQL Data                  │  │
 │  └───────────────────────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │ ⚙️ Engine Infrastructure & Resource Utilization                           │  │
-│  │  💻 CPU: 37.6% | 💾 RAM: 3.6 GB | 🏹 PyArrow: 12.47 MB | ⚡ Latency: 17ms│  │
-│  │  📊 System Resource History (CPU / Memory Trend Graph)                    │  │
+│  │ Engine Infrastructure & Resource Utilization                           │  │
+│  │  CPU: 37.6% | RAM: 3.6 GB | PyArrow: 12.47 MB | Latency: 17ms│  │
+│  │  System Resource History (CPU / Memory Trend Graph)                    │  │
 │  └───────────────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────▲────────────────────────────────────────┘
                                          │ WebSocket JSON Stream
@@ -138,19 +138,19 @@ Rill includes a state-of-the-art, dark-themed **Live Business Intelligence & Sys
 ```
 
 ### Dashboard Highlights:
-- **📊 Multi-View Glassmorphic Navigation**: Seamlessly switch between the **Metrics Console**, **Custom Queries**, **Alert Rules & Settings**, and **Alert Logs** right from the top bar.
-- **💎 Business Intelligence Centerpiece**: Highlights Custom Scheduled Queries mapped to Live Charts and extracts numeric results into business KPI metrics that trigger alerts instantaneously.
-- **🔍 Custom SQL Queries & Chart Mapping**: Write, execute, and schedule ad-hoc SQL queries against the on-disk `rill_metrics` database. Map query results on the fly to **Interactive Line, Bar, and Scatter Charts** with zoom/pan capabilities powered by `chartjs-plugin-zoom`.
-- **⚙️ Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, DuckDB storage size (`Live` vs `Metrics` DB), throughput (RPS), and step latency into a dedicated secondary monitoring section.
-- **🔔 Unified Alert Logs**: Displays engine-side exceptions, user-pushed alerts, and threshold rule triggers in a single unified view with **severity badges** (🔴🟡🔵), **source badges** (👤 User / ⚙️ Engine / ⚡ Rule), **filter toggles** (All / Errors / Warnings / User / Engine / Rules), and severity-colored **toast notifications** for real-time visibility.
-- **🔊 Browser-Native Sound Alerts**: Real-time Web Audio API acoustic engine with selectable tones (`Classic Beep`, `Warning Siren`, `Gentle Chime`, `Urgent Buzzer`), customizable duration sliders (1s–30s), and instant sound preview.
+- **Multi-View Glassmorphic Navigation**: Seamlessly switch between the **Metrics Console**, **Custom Queries**, **Alert Rules & Settings**, and **Alert Logs** right from the top bar.
+- **Business Intelligence Centerpiece**: Highlights Custom Scheduled Queries mapped to Live Charts and extracts numeric results into business KPI metrics that trigger alerts instantaneously.
+- **Custom SQL Queries & Chart Mapping**: Write, execute, and schedule ad-hoc SQL queries against the on-disk `rill_metrics` database. Map query results on the fly to **Interactive Line, Bar, and Scatter Charts** with zoom/pan capabilities powered by `chartjs-plugin-zoom`.
+- **Separated System Infrastructure**: Cleanly separates host CPU, System Memory, PyArrow C++ pool allocations, DuckDB storage size (`Live` vs `Metrics` DB), throughput (RPS), and step latency into a dedicated secondary monitoring section.
+- **Unified Alert Logs**: Displays engine-side exceptions, user-pushed alerts, and threshold rule triggers in a single unified view with **severity badges** (🔴🟡🔵), **source badges** (User / Engine / Rule), **filter toggles** (All / Errors / Warnings / User / Engine / Rules), and severity-colored **toast notifications** for real-time visibility.
+- **Browser-Native Sound Alerts**: Real-time Web Audio API acoustic engine with selectable tones (`Classic Beep`, `Warning Siren`, `Gentle Chime`, `Urgent Buzzer`), customizable duration sliders (1s–30s), and instant sound preview.
 - **⚪ Offline / Disconnected Grey Tabs**: Multi-tab connection bar with automatic health tracking. If a remote Quack server drops connection or exits, its tab instantly turns grey with a grey status dot and hover failure details.
-- **🔗 Server-Side Webhook Relay (`POST /api/webhook/send`)**: Bypasses browser CORS restrictions by routing real-time alert notifications directly to **Slack Incoming Webhooks**, **Google Chat / Google Meet Cards**, or **Custom JSON endpoints**.
-- **⚡ Real-Time Threshold Rule Engine**: Evaluates custom trigger rules (`>`, `>=`, `<`, `<=`, `==`) on system and business metrics with cooldown protection. Rules and settings persist automatically in `localStorage`.
+- **Server-Side Webhook Relay (`POST /api/webhook/send`)**: Bypasses browser CORS restrictions by routing real-time alert notifications directly to **Slack Incoming Webhooks**, **Google Chat / Google Meet Cards**, or **Custom JSON endpoints**.
+- **Real-Time Threshold Rule Engine**: Evaluates custom trigger rules (`>`, `>=`, `<`, `<=`, `==`) on system and business metrics with cooldown protection. Rules and settings persist automatically in `localStorage`.
 
 ---
 
-## 🚀 Quickstart Guide
+## Quickstart Guide
 
 ### Installation
 
@@ -311,7 +311,7 @@ results = engine.query_metrics("""
 
 ---
 
-## 🌟 Advanced Examples
+## Advanced Examples
 
 See our complete end-to-end demos inside `examples/`:
 
@@ -322,7 +322,7 @@ See our complete end-to-end demos inside `examples/`:
 
 ---
 
-## 🧪 Running Tests
+## Running Tests
 
 Rill is verified by a comprehensive test suite (`pytest`) covering schema enrichment, primary key extraction, table processing modes, mandatory TTL validation, memory governance warnings, backpressure slicing, zero-copy joins, alerts pipeline, bug regression tests, and connector edge cases:
 

@@ -112,7 +112,7 @@ def run_benchmark(
     """
     print("\n" + "=" * 80)
     opt_str = " | OPTIMIZED" if (use_dictionary or auto_compact_chunks > 0 or use_prepared_statements or use_incremental_join) else " | BASELINE"
-    print(f"🚀 RUNNING BENCHMARK: {num_products:,} Products | {total_impressions:,} Impressions{opt_str}")
+    print(f"RUNNING BENCHMARK: {num_products:,} Products | {total_impressions:,} Impressions{opt_str}")
     print(f"   [Config: threads={threads}, compact_chunks={auto_compact_chunks}, dictionary={use_dictionary}, prepared_sql={use_prepared_statements}, incremental_join={use_incremental_join}]")
     print("=" * 80)
 
@@ -173,7 +173,7 @@ def run_benchmark(
         engine.join_tasks.append(jtask)
 
     # 4. Generate data batches
-    print(f"📦 Generating synthetic streams ({num_batches} batches across {num_products:,} distinct products)...")
+    print(f"Generating synthetic streams ({num_batches} batches across {num_products:,} distinct products)...")
     t_gen_start = time.perf_counter()
     batches = generate_stream_batches(num_products, total_impressions, click_ratio=0.15, num_batches=num_batches)
     t_gen_end = time.perf_counter()
@@ -218,7 +218,7 @@ def run_benchmark(
     ingest_time_ms = (t_ingest_end - t_ingest_start) * 1000.0
     throughput_rps = (total_records / ingest_time_ms) * 1000.0 if ingest_time_ms > 0 else 0.0
 
-    print(f"   ✅ Ingestion Complete: {ingest_time_ms:.2f} ms | Throughput: {throughput_rps:,.0f} records/sec")
+    print(f"   Ingestion Complete: {ingest_time_ms:.2f} ms | Throughput: {throughput_rps:,.0f} records/sec")
 
     # 6. Measure DuckDB Zero-Copy SQL Aggregation Bottleneck (Top 10 in Last 10 Minutes)
     now_ts = time.time()
@@ -246,7 +246,7 @@ def run_benchmark(
         LIMIT 10
     """
 
-    print("\n🔍 Executing Scheduled SQL Tasks (`WHERE system_ts >= now - 10m`)...")
+    print("\nExecuting Scheduled SQL Tasks (`WHERE system_ts >= now - 10m`)...")
     
     task_imp = ScheduledSQLTask(
         name="bench_top_impressions",
@@ -269,8 +269,8 @@ def run_benchmark(
     sql_imp_ms = engine.metrics.task_latencies.get("bench_top_impressions", 0.0) if hasattr(engine.metrics, "task_latencies") else 0.0
     sql_click_ms = engine.metrics.task_latencies.get("bench_top_clicks", 0.0) if hasattr(engine.metrics, "task_latencies") else 0.0
 
-    print(f"   ⚡ Top 10 Impressions Task Latency : {sql_imp_ms:.2f} ms")
-    print(f"   ⚡ Top 10 Clicks Task Latency      : {sql_click_ms:.2f} ms")
+    print(f"   Top 10 Impressions Task Latency : {sql_imp_ms:.2f} ms")
+    print(f"   Top 10 Clicks Task Latency      : {sql_click_ms:.2f} ms")
 
     top_impressions = engine._tables["top_impressions"].to_arrow() if "top_impressions" in engine._tables else None
     top_clicks = engine._tables["top_clicks"].to_arrow() if "top_clicks" in engine._tables else None
@@ -279,7 +279,7 @@ def run_benchmark(
     imp_rows = top_impressions.to_pylist() if top_impressions else []
     click_rows = top_clicks.to_pylist() if top_clicks else []
 
-    print("\n   🏆 [Top 10 Products by Impressions in Last 10m]")
+    print("\n   [Top 10 Products by Impressions in Last 10m]")
     print("      +------------+--------------------+")
     print("      | Product ID |   Impression Count |")
     print("      +------------+--------------------+")
@@ -287,7 +287,7 @@ def run_benchmark(
         print(f"      | {r['product_id']:<10} | {r['impression_count']:>18,} |")
     print("      +------------+--------------------+")
 
-    print("\n   🏆 [Top 10 Products by Clicks in Last 10m]")
+    print("\n   [Top 10 Products by Clicks in Last 10m]")
     print("      +------------+--------------------+")
     print("      | Product ID |        Click Count |")
     print("      +------------+--------------------+")
@@ -309,7 +309,7 @@ def run_benchmark(
     allocated_mb = allocated_bytes / (1024 * 1024)
     bytes_per_row = allocated_bytes / total_records if total_records > 0 else 0
 
-    print(f"\n💾 PyArrow C++ Memory Allocation : {allocated_mb:.2f} MB ({bytes_per_row:.1f} bytes/record)")
+    print(f"\nPyArrow C++ Memory Allocation : {allocated_mb:.2f} MB ({bytes_per_row:.1f} bytes/record)")
 
     return {
         "num_products": num_products,
@@ -328,7 +328,7 @@ def print_summary_report(results: List[Dict[str, Any]]) -> None:
     Prints a formatted comparative bottleneck analysis summary across all evaluated scales.
     """
     print("\n" + "=" * 100)
-    print("📊 RILL ENGINE BOTTLENECK ANALYSIS SUMMARY REPORT")
+    print("RILL ENGINE BOTTLENECK ANALYSIS SUMMARY REPORT")
     print("=" * 100)
     print(f"{'Products Pool':<16} | {'Total Records':<14} | {'Ingest (ms)':<12} | {'Throughput (RPS)':<18} | {'Top 10 Imp SQL':<15} | {'Top 10 Clk SQL':<15} | {'TTL Prune':<10}")
     print("-" * 100)
@@ -343,7 +343,7 @@ def print_summary_report(results: List[Dict[str, Any]]) -> None:
             f" | {r['ttl_prune_ms']:<8.2f} ms"
         )
     print("=" * 100)
-    print("\n💡 Key Bottleneck & Scalability Insights:")
+    print("\nKey Bottleneck & Scalability Insights:")
     print("  1. DuckDB Zero-Copy Aggregation (Cardinality Scaling):")
     print("     Notice how query latency scales as distinct `product_id` keys increase from 1K to 1M.")
     print("     Because DuckDB queries live PyArrow memory directly via zero-copy C++ pointers, hash table")

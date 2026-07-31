@@ -22,7 +22,7 @@ from rills import (
 
 def main():
     print("=" * 70)
-    print("🚀 Starting Rill Streaming Engine with Quack Server...")
+    print("Starting Rill Streaming Engine with Quack Server...")
     print("=" * 70)
 
     # 1. Initialize Rill Engine with Quack server enabled on port 9494
@@ -105,9 +105,9 @@ def main():
 
     # 6. Start Engine Background Loop & Quack Thread
     engine.start()
-    print("\n✅ Rill Engine is running!")
+    print("\nRill Engine is running!")
     print("📡 Quack Server exposed at: quack:127.0.0.1:9494")
-    print("🔑 Quack Auth Token:      demo")
+    print("Quack Auth Token:      demo")
     print("\n👉 Next Steps:")
     print("   1. Open the Node.js Dashboard: http://localhost:3000")
     print("   2. In Quack Server Address, enter: quack:127.0.0.1:9494")
@@ -156,7 +156,7 @@ def main():
         print("\nStopping simulation...")
     finally:
         engine.stop()
-        print("🛑 Rill Engine stopped gracefully.")
+        print("Rill Engine stopped gracefully.")
 
 
 if __name__ == "__main__":

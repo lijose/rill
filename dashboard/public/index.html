@@ -48,7 +48,7 @@
         <main class="app-main">
             <!-- Connection Card -->
             <section class="card connection-card" id="connection-panel">
-                <h2>🔌 Connect to Rill Quack Server</h2>
+                <h2>Connect to Rill Quack Server</h2>
                 <p class="subtitle">Enter the DuckDB Quack remote address and token to fetch streaming engine statistics.</p>
                 <form id="connect-form" class="connect-form">
                     <div class="input-group">
@@ -69,16 +69,16 @@
                 <!-- Main View Navigation Bar -->
                 <div class="dashboard-nav-tabs">
                     <button class="nav-tab-btn active" id="tab-btn-metrics" data-view="metrics">
-                        <span>📊</span> Metrics Console
+                        <span></span> Metrics Console
                     </button>
                     <button class="nav-tab-btn" id="tab-btn-queries" data-view="queries">
-                        <span>🔍</span> Custom Queries
+                        <span></span> Custom Queries
                     </button>
                     <button class="nav-tab-btn" id="tab-btn-alert-settings" data-view="alert-settings">
-                        <span>⚙️</span> Alert Rules & Settings
+                        <span></span> Alert Rules & Settings
                     </button>
                     <button class="nav-tab-btn" id="tab-btn-alert-logs" data-view="alert-logs">
-                        <span>🔔</span> Alert Logs <span class="badge" id="alert-badge-count">0</span>
+                        <span></span> Alert Logs <span class="badge" id="alert-badge-count">0</span>
                     </button>
                 </div>
 
@@ -109,7 +109,7 @@
                     <!-- SECTION 1: SCHEDULED QUERY WIDGETS (Key Business Intelligence) -->
                     <div class="section-container scheduled-spotlight" id="scheduled-widgets-container" style="display: none;">
                         <div class="section-title-bar">
-                            <h2>💎 Key Business Intelligence & Scheduled Queries</h2>
+                            <h2>Key Business Intelligence & Scheduled Queries</h2>
                             <span class="section-tag" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border-color: rgba(245, 158, 11, 0.3);">Live Streaming</span>
                         </div>
                         <div id="scheduled-widgets-grid" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: stretch;">
@@ -120,7 +120,7 @@
                     <!-- SECTION 2: SYSTEM & ENGINE INFRASTRUCTURE -->
                     <div class="section-container system-spotlight">
                         <div class="section-title-bar">
-                            <h2>⚙️ Engine Infrastructure & Resource Utilization</h2>
+                            <h2>Engine Infrastructure & Resource Utilization</h2>
                             <span class="section-tag system-tag">Host & Process</span>
                         </div>
 
@@ -130,8 +130,7 @@
                             <div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">CPU Utilization</span>
-                                    <span class="metric-icon">💻</span>
-                                </div>
+                                                                    </div>
                                 <div class="metric-value" id="val-cpu">0.0%</div>
                                 <div class="progress-bar-container">
                                     <div class="progress-bar" id="bar-cpu" style="width: 0%"></div>
@@ -142,8 +141,7 @@
                             <div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">System Memory</span>
-                                    <span class="metric-icon">💾</span>
-                                </div>
+                                                                    </div>
                                 <div class="metric-value" id="val-mem">0.0 GB / 0.0 GB</div>
                                 <div class="metric-subtext" id="sub-mem-pct">0% used</div>
                                 <div class="progress-bar-container">
@@ -155,8 +153,7 @@
                             <div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">PyArrow Allocated Memory</span>
-                                    <span class="metric-icon">🏹</span>
-                                </div>
+                                                                    </div>
                                 <div class="metric-value" id="val-pyarrow">0.00 MB</div>
                                 <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
                             </div>
@@ -165,8 +162,7 @@
                             <div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">DuckDB In-Memory Storage</span>
-                                    <span class="metric-icon">🦆</span>
-                                </div>
+                                                                    </div>
                                 <div class="metric-value" id="val-duckdb-live">Live: 0.00 MB</div>
                                 <div class="metric-subtext" id="val-duckdb-metrics">Metrics: 0.00 MB</div>
                             </div>
@@ -175,8 +171,7 @@
                             <div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">Throughput (RPS)</span>
-                                    <span class="metric-icon">🚀</span>
-                                </div>
+                                                                    </div>
                                 <div class="metric-value" id="val-rps">0.00 /s</div>
                                 <div class="metric-subtext" id="val-total-records">Total: 0 processed</div>
                             </div>
@@ -185,8 +180,7 @@
                             <div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">Last Batch Latency</span>
-                                    <span class="metric-icon">⚡</span>
-                                </div>
+                                                                    </div>
                                 <div class="metric-value" id="val-latency">0.00 ms</div>
                                 <div class="metric-subtext" id="val-avg-latency">Avg: 0.00 ms</div>
                             </div>
@@ -195,7 +189,7 @@
                         <!-- System Resource History Chart -->
                         <div class="chart-section card">
                             <div class="chart-header">
-                                <h2>📊 System Resource History</h2>
+                                <h2>System Resource History</h2>
                                 <div class="chart-legend">
                                     <span class="legend-item"><span class="legend-color cpu-color"></span> CPU</span>
                                     <span class="legend-item"><span class="legend-color mem-color"></span> Memory</span>
@@ -213,7 +207,7 @@
                 <div id="view-queries" class="view-panel hidden">
                     <div class="card query-builder-card">
                         <div class="section-title-bar">
-                            <h2>🔍 Custom SQL Query Runner</h2>
+                            <h2>Custom SQL Query Runner</h2>
                             <span class="section-tag">DuckDB Metrics Database</span>
                         </div>
                         <p class="settings-description">Write and execute DuckDB SQL queries against the <code>rill_metrics</code> table or engine metadata. Allowed prefixes: SELECT, WITH, EXPLAIN, PRAGMA show_tables, DESCRIBE.</p>
@@ -233,7 +227,7 @@
                         
                         <div class="query-actions" style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
                             <button id="run-query-btn" class="btn btn-primary">▶ Run Query</button>
-                            <button id="show-tables-btn" class="btn btn-secondary">📋 Show Tables</button>
+                            <button id="show-tables-btn" class="btn btn-secondary">Show Tables</button>
                             
                             <div style="display: flex; gap: 5px; align-items: center; border-left: 1px solid var(--border); padding-left: 15px;">
                                 <label for="query-limit" style="font-size: 12px;">Limit:</label>
@@ -251,7 +245,7 @@
                                 <input type="text" id="query-name" placeholder="Optional name" class="text-input" style="width: 120px; padding: 6px;">
                                 <label for="schedule-interval" style="font-size: 12px;">Interval (s):</label>
                                 <input type="number" id="schedule-interval" min="1" value="5" class="number-input" style="width: 60px;">
-                                <button id="schedule-query-btn" class="btn btn-secondary">⏰ Schedule Query</button>
+                                <button id="schedule-query-btn" class="btn btn-secondary">Schedule Query</button>
                             </div>
                         </div>
                         <div id="query-error-msg" class="error-msg" style="margin-top: 10px; display: none;"></div>
@@ -291,7 +285,7 @@
                     
                     <div class="card query-chart-card" id="query-chart-card" style="display: none;">
                         <div class="section-title-bar">
-                            <h2>📈 Query Visualization</h2>
+                            <h2>Query Visualization</h2>
                             <span class="section-tag">Interactive</span>
                         </div>
                         <div class="chart-container" style="height: 350px;">
@@ -301,7 +295,7 @@
                     
                     <div class="card query-results-card">
                         <div class="section-title-bar">
-                            <h2>📋 Query Results</h2>
+                            <h2>Query Results</h2>
                             <span class="section-tag" id="query-elapsed-tag">0.0 ms</span>
                         </div>
                         <div class="table-container" style="max-height: 400px; overflow-y: auto;">
@@ -318,7 +312,7 @@
                     
                     <div class="card scheduled-queries-card">
                         <div class="section-title-bar">
-                            <h2>⏰ Scheduled Queries</h2>
+                            <h2>Scheduled Queries</h2>
                         </div>
                         <div class="table-container">
                             <table class="history-table" id="scheduled-queries-table">
@@ -347,7 +341,7 @@
                         <!-- Sound Configuration Card -->
                         <div class="card settings-card">
                             <div class="settings-card-header">
-                                <h2>🔊 Sound Alert Configuration</h2>
+                                <h2>Sound Alert Configuration</h2>
                                 <label class="toggle-switch-wrapper">
                                     <input type="checkbox" id="alert-sound-enable-toggle" checked>
                                     <span class="toggle-slider"></span>
@@ -376,14 +370,14 @@
                                 </div>
                             </div>
                             <div class="settings-actions">
-                                <button id="test-sound-btn" class="btn btn-primary">🔊 Test Alert Sound</button>
+                                <button id="test-sound-btn" class="btn btn-primary">Test Alert Sound</button>
                             </div>
                         </div>
 
                         <!-- Webhook Notifications Card -->
                         <div class="card settings-card">
                             <div class="settings-card-header">
-                                <h2>🔗 Webhook Notifications</h2>
+                                <h2>Webhook Notifications</h2>
                                 <label class="toggle-switch-wrapper">
                                     <input type="checkbox" id="webhook-enable-toggle">
                                     <span class="toggle-slider"></span>
@@ -409,7 +403,7 @@
                                 </div>
                             </div>
                             <div class="settings-actions">
-                                <button id="test-webhook-btn" class="btn btn-secondary">🔗 Test Webhook Delivery</button>
+                                <button id="test-webhook-btn" class="btn btn-secondary">Test Webhook Delivery</button>
                                 <span id="webhook-test-status" class="status-message"></span>
                             </div>
                         </div>
@@ -418,7 +412,7 @@
                     <!-- Trigger Rules Management Card -->
                     <div class="card rules-management-card">
                         <div class="section-title-bar">
-                            <h2>⚡ Configured Alert Trigger Rules</h2>
+                            <h2> Configured Alert Trigger Rules</h2>
                             <span class="section-tag">Live Evaluated</span>
                         </div>
                         <p class="settings-description">Create custom conditions based on live engine metrics (`CPU`, `Memory`, `Throughput`) or custom PyArrow `Business Metrics`. When evaluated true, the configured alert tone and webhook will fire.</p>
@@ -491,7 +485,7 @@
                     <div class="card logs-card">
                         <div class="history-header">
                             <div>
-                                <h2>🔔 Alert History & Logs</h2>
+                                <h2>Alert History & Logs</h2>
                                 <p class="settings-description">Chronological log of all alerts — threshold rule triggers, engine exceptions, and user-pushed alerts from application code.</p>
                             </div>
                             <div class="history-controls">
@@ -504,9 +498,9 @@
                             <button class="alert-filter-btn active" data-filter="all">All</button>
                             <button class="alert-filter-btn" data-filter="error"><span class="severity-dot severity-error"></span> Errors</button>
                             <button class="alert-filter-btn" data-filter="warning"><span class="severity-dot severity-warning"></span> Warnings</button>
-                            <button class="alert-filter-btn" data-filter="user"><span class="source-icon">👤</span> User</button>
-                            <button class="alert-filter-btn" data-filter="engine"><span class="source-icon">⚙️</span> Engine</button>
-                            <button class="alert-filter-btn" data-filter="rule"><span class="source-icon">⚡</span> Rules</button>
+                            <button class="alert-filter-btn" data-filter="user"> User</button>
+                            <button class="alert-filter-btn" data-filter="engine"> Engine</button>
+                            <button class="alert-filter-btn" data-filter="rule"> Rules</button>
                         </div>
 
                         <div class="table-container">

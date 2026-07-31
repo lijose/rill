@@ -22,7 +22,7 @@ from rills import (
 
 def main():
     print("=" * 75)
-    print("🚀 Initializing Rill Engine with Multi-Stream Joins...")
+    print("Initializing Rill Engine with Multi-Stream Joins...")
     print("=" * 75)
 
     engine = RillEngine(trigger_interval_ms=200.0)
@@ -100,7 +100,7 @@ def main():
 
     # Start engine loop
     engine.start()
-    print("✅ Rill Engine background loop active.")
+    print("Rill Engine background loop active.")
 
     try:
         # Push Stream A: User profile updates
@@ -152,7 +152,7 @@ def main():
 
     finally:
         engine.stop()
-        print("\n🛑 Rill Engine stopped gracefully.")
+        print("\nRill Engine stopped gracefully.")
         print("=" * 75)
 
 

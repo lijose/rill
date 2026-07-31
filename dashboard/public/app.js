@@ -161,6 +161,24 @@ function initWebSocket() {
                     connectionStatusPill.classList.remove('connected');
                     connectionStatusPill.querySelector('.status-text').innerText = 'Offline / Error';
                 }
+
+                if (payload.error.includes("Quack connection closed")) {
+                    showToast('Reconnecting...', `Attempting to reconnect ${connObj.address} in 3s...`, '', 'info');
+                    setTimeout(() => {
+                        const currentConn = activeConnections.find(c => c.id === tabId);
+                        if (currentConn && (currentConn.status === 'error' || currentConn.status === 'disconnected')) {
+                            currentConn.status = 'connecting';
+                            currentConn.lastError = null;
+                            if (activeConnectionId === tabId) renderTabs();
+                            ws.send(JSON.stringify({
+                                action: 'connect',
+                                tabId: tabId,
+                                address: currentConn.address,
+                                token: currentConn.token
+                            }));
+                        }
+                    }, 3000);
+                }
             } else if (payload.status === 'connected') {
                 console.log(`Tab ${tabId} successfully attached to Quack server.`);
                 connObj.status = 'connected';
@@ -1296,7 +1314,7 @@ document.addEventListener('DOMContentLoaded', () => {
             widget = document.createElement('div');
             widget.id = `widget-${payload.queryId}`;
             widget.className = 'card chart-card';
-            widget.style.cssText = 'flex: 1 1 400px; display: flex; flex-direction: column; resize: both; overflow: auto; min-width: 300px; min-height: 250px;';
+            widget.style.cssText = 'display: flex; flex-direction: column; resize: both; overflow: hidden; width: 450px; height: 350px; min-width: 300px; min-height: 250px; background: var(--bg-card);';
             
             if (config.type === 'none') {
                 widget.innerHTML = `

@@ -20,7 +20,7 @@ from rills import (
 
 def main():
     print("=" * 70)
-    print("🚀 Initializing The Rill Streaming Engine...")
+    print("Initializing The Rill Streaming Engine...")
     print("=" * 70)
 
     # 1. Initialize Rill Engine with a 200ms micro-batch trigger
@@ -64,7 +64,7 @@ def main():
 
     # 7. Start Engine Background Loop
     engine.start()
-    print("✅ Rill Engine loop started in background (200ms micro-batch interval).")
+    print("Rill Engine loop started in background (200ms micro-batch interval).")
 
     # Simulate streaming events
     try:
@@ -104,13 +104,13 @@ def main():
         print(f"  Table Row Counts        : {all_metrics['table_row_counts']}")
 
         # 8. Test ad-hoc zero-copy metrics query
-        print("\n🔍 Running ad-hoc DuckDB zero-copy query over 'rill_alerts'...")
+        print("\nRunning ad-hoc DuckDB zero-copy query over 'rill_alerts'...")
         high_value = engine.query_metrics("SELECT * FROM rill_alerts ORDER BY ts DESC LIMIT 2").to_pylist()
         print(high_value)
 
     finally:
         engine.stop()
-        print("\n🛑 Rill Engine stopped gracefully.")
+        print("\nRill Engine stopped gracefully.")
         print("=" * 70)
 
 

@@ -114,7 +114,7 @@ def metrics_loop(con):
                     print(json.dumps({"type": "engine_alerts", "data": alerts_data}), flush=True)
         except Exception as e:
             # rill_alerts table may not exist yet, that's ok
-            if "rill_alerts" not in str(e).lower() or "not found" not in str(e).lower():
+            if "rill_alerts" not in str(e).lower() and "not found" not in str(e).lower():
                 pass  # Silently ignore if table doesn't exist yet
 
         # Poll for new dashboard queries from the backend
@@ -147,7 +147,7 @@ def metrics_loop(con):
                                 }
                             }), flush=True)
         except Exception as e:
-            if "rill_dashboard_queries" not in str(e).lower() or "not found" not in str(e).lower():
+            if "rill_dashboard_queries" not in str(e).lower() and "not found" not in str(e).lower():
                 pass
 
         # Handle scheduled queries
