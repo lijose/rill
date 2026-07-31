@@ -3,7 +3,6 @@ Tests for Rill Engine performance and architecture optimizations:
 - PyArrow chunk compaction (`compact`, `compact_all`, auto-compaction)
 - DuckDB prepared statement caching (`use_prepared_statements`)
 - PyArrow dictionary encoding (`pa.dictionary` categorical support)
-- Incremental micro-batch joins (`TableJoinTask(incremental=True)`)
 """
 
 import time
@@ -13,7 +12,6 @@ from rills import (
     RillEngine,
     MemoryConnector,
     ScheduledSQLTask,
-    TableJoinTask,
     RetentionPolicy,
     schema as rill_schema,
 )
@@ -130,42 +128,4 @@ def test_prepared_statement_sql_task():
     assert res_dict["mem"] == 50.0
 
 
-def test_incremental_join_task():
-    engine = RillEngine(trigger_interval_ms=10.0)
-    engine.register_table("orders", mode="append", retention_policy=RetentionPolicy(max_rows=1000))
-    engine.register_table("profiles", mode="snapshot", primary_key="user_id")
 
-    orders_conn = MemoryConnector("orders")
-    profiles_conn = MemoryConnector("profiles")
-    engine.add_connector(orders_conn)
-    engine.add_connector(profiles_conn)
-
-    jtask = TableJoinTask(
-        name="join_profiles",
-        left_table="orders",
-        right_table="profiles",
-        keys="user_id",
-        output_table="enriched_orders",
-        join_type="inner",
-        incremental=True
-    )
-    engine.join_tasks.append(jtask)
-
-    # Initial profiles and orders
-    profiles_conn.push({"user_id": [101, 102], "country": ["USA", "UK"]})
-    orders_conn.push({"order_id": [1, 2], "user_id": [101, 102], "amount": [100.0, 200.0]})
-    engine.step()
-
-    enriched_1 = engine._tables.get("enriched_orders").to_arrow()
-    assert enriched_1.num_rows == 2
-    assert jtask._last_processed_rows == 2
-
-    # Push new orders only (no changes to profiles)
-    orders_conn.push({"order_id": [3], "user_id": [101], "amount": [300.0]})
-    engine.step()
-
-    enriched_2 = engine._tables.get("enriched_orders").to_arrow()
-    assert enriched_2.num_rows == 3
-    assert jtask._last_processed_rows == 3
-    countries = [r["country"] for r in enriched_2.to_pylist()]
-    assert countries == ["USA", "UK", "USA"]

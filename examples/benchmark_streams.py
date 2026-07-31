@@ -103,17 +103,16 @@ def run_benchmark(
     threads: int = 4,
     auto_compact_chunks: int = 32,
     use_dictionary: bool = False,
-    use_prepared_statements: bool = True,
-    use_incremental_join: bool = False
+    use_prepared_statements: bool = True
 ) -> Dict[str, Any]:
     """
     Runs a complete benchmark iteration for a specified product pool size, capturing
     ingestion throughput, DuckDB zero-copy SQL latency, memory allocation, and TTL pruning costs.
     """
     print("\n" + "=" * 80)
-    opt_str = " | OPTIMIZED" if (use_dictionary or auto_compact_chunks > 0 or use_prepared_statements or use_incremental_join) else " | BASELINE"
+    opt_str = " | OPTIMIZED" if (use_dictionary or auto_compact_chunks > 0 or use_prepared_statements) else " | BASELINE"
     print(f"RUNNING BENCHMARK: {num_products:,} Products | {total_impressions:,} Impressions{opt_str}")
-    print(f"   [Config: threads={threads}, compact_chunks={auto_compact_chunks}, dictionary={use_dictionary}, prepared_sql={use_prepared_statements}, incremental_join={use_incremental_join}]")
+    print(f"   [Config: threads={threads}, compact_chunks={auto_compact_chunks}, dictionary={use_dictionary}, prepared_sql={use_prepared_statements}]")
     print("=" * 80)
 
     # Clean memory before run
@@ -158,19 +157,6 @@ def run_benchmark(
     engine.add_connector(imp_connector)
     engine.add_connector(click_connector)
 
-    # If incremental join requested, register stream join task
-    if use_incremental_join:
-        from rills.compute.join import TableJoinTask
-        jtask = TableJoinTask(
-            name="imp_click_join",
-            left_table="clicks",
-            right_table="impressions",
-            keys=["product_id", "account_id"],
-            output_table="joined_events",
-            join_type="inner",
-            incremental=True
-        )
-        engine.join_tasks.append(jtask)
 
     # 4. Generate data batches
     print(f"Generating synthetic streams ({num_batches} batches across {num_products:,} distinct products)...")
@@ -366,7 +352,6 @@ def main():
     parser.add_argument("--compact-chunks", type=int, default=32, help="Auto-compaction threshold (default: 32)")
     parser.add_argument("--dictionary", action="store_true", help="Use PyArrow dictionary encoding for product_id")
     parser.add_argument("--prepared-statements", action="store_true", default=True, help="Use prepared statement caching (default: True)")
-    parser.add_argument("--incremental-join", action="store_true", help="Enable incremental micro-batch join between impressions and clicks")
     args = parser.parse_args()
 
     # If --optimize passed, enable all optimizations
@@ -385,8 +370,7 @@ def main():
             threads=args.threads,
             auto_compact_chunks=args.compact_chunks,
             use_dictionary=args.dictionary,
-            use_prepared_statements=args.prepared_statements,
-            use_incremental_join=args.incremental_join
+            use_prepared_statements=args.prepared_statements
         )
     else:
         # Run full benchmark across 1K, 10K, and 1M products
@@ -403,8 +387,7 @@ def main():
                 threads=args.threads,
                 auto_compact_chunks=args.compact_chunks,
                 use_dictionary=args.dictionary,
-                use_prepared_statements=args.prepared_statements,
-                use_incremental_join=args.incremental_join
+                use_prepared_statements=args.prepared_statements
             )
             results.append(res)
 

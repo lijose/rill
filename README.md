@@ -71,8 +71,8 @@ Use `rills.schema([fields], primary_key="user_id", mode="append")` to embed gove
 ### 4. PyArrow Memory Budget Governance
 Configure `RillEngine(memory_budget_bytes=...)` or `memory_budget_mb=...` along with an optional `on_memory_warning` callback. During every micro-batch iteration (`step()`), Rill monitors `pa.total_allocated_bytes()` across all C++ memory pools and emits a `ResourceWarning` if the memory threshold is crossed.
 
-### 5. Multi-Stream Joins & Aggregations (`TableJoinTask`)
-Continuously join two live stream tables (`left_table`, `right_table`) via C++ relational hash-joins (`pc.is_in` / `Table.join`) and calculate real-time aggregations (`sum`, `count`, `avg`, `min`, `max`) without exiting PyArrow memory.
+### 5. Multi-Stream Joins & Aggregations
+Use **Scheduled SQL Tasks** (`ScheduledSQLTask`) to continuously join multiple live stream tables natively in DuckDB. Since DuckDB accesses the underlying PyArrow tables with zero-copy, you can write standard SQL joins (`INNER JOIN`, `LEFT JOIN`) and real-time aggregations (`SUM`, `COUNT`) that compute efficiently without exiting memory.
 
 ### 6. Bounded Connector Backpressure
 Input connectors (`MemoryConnector`, `JSONStreamConnector`) enforce configurable limits (`max_buffer_records`, `max_buffer_bytes`) paired with overflow strategies (`"drop_oldest"`, `"drop_newest"`, `"error"`) that slice excess data cleanly across batch boundaries.

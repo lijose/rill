@@ -13,7 +13,6 @@ import pyarrow as pa
 from rills import (
     RillEngine,
     MemoryConnector,
-    TableJoinTask,
     ScheduledSQLTask,
     RetentionPolicy,
     OutputAPI,
@@ -53,18 +52,27 @@ def main():
     engine.add_connector(users_connector)
     engine.add_connector(orders_connector)
 
-    # 4. Attach Continuous Multi-Stream Join Task
+    # 4. Attach Scheduled SQL Task to perform the join
     # Joins 'orders' + 'user_profiles' on 'user_id' into 'orders_enriched' table
-    join_task = TableJoinTask(
+    join_task = ScheduledSQLTask(
         name="enrich_orders",
-        left_table="orders",
-        right_table="user_profiles",
-        keys="user_id",
+        query="""
+            SELECT 
+                o.order_id, 
+                o.user_id, 
+                o.amount, 
+                o.category, 
+                u.name, 
+                u.region, 
+                u.tier
+            FROM orders o
+            INNER JOIN user_profiles u ON o.user_id = u.user_id
+        """,
         output_table="orders_enriched",
-        join_type="inner",
+        interval_seconds=0.5,
         primary_key="order_id"
     )
-    engine.add_join_task(join_task)
+    engine.add_sql_task(join_task)
 
     # Pre-register orders_enriched so scheduled SQL doesn't fail on first tick
     enriched_schema = pa.schema([

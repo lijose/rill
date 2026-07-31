@@ -19,7 +19,6 @@ from .connectors.file import FileStreamConnector
 from .connectors.websocket import WebSocketConnector
 from .connectors.kafka import KafkaConnector
 from .compute.sql import ScheduledSQLTask, DuckDBBridge
-from .compute.join import TableJoinTask
 from .compute.upsert import upsert_table
 from .retention import RetentionPolicy
 from .metrics import MetricsRegistry
@@ -39,7 +38,6 @@ __all__ = [
     "WebSocketConnector",
     "KafkaConnector",
     "ScheduledSQLTask",
-    "TableJoinTask",
     "DuckDBBridge",
     "RetentionPolicy",
     "MetricsRegistry",

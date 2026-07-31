@@ -12,7 +12,6 @@ import pyarrow as pa
 from .table import RillTable
 from .connectors.base import BaseConnector
 from .compute.sql import ScheduledSQLTask, DuckDBBridge
-from .compute.join import TableJoinTask
 from .metrics import MetricsRegistry, create_alerts_table, create_dashboard_queries_table
 
 logger = logging.getLogger(__name__)
@@ -56,7 +55,6 @@ class RillEngine:
         self._tables: Dict[str, RillTable] = {}
         self.connectors: List[BaseConnector] = []
         self.sql_tasks: List[ScheduledSQLTask] = []
-        self.join_tasks: List['TableJoinTask'] = []
         self.metrics = MetricsRegistry()
         self.duckdb = DuckDBBridge(self, connection=duckdb_connection)
         
@@ -168,22 +166,6 @@ class RillEngine:
         with self._lock:
             if task in self.sql_tasks:
                 self.sql_tasks.remove(task)
-
-    def add_join_task(self, task: 'TableJoinTask') -> None:
-        """
-        Registers a continuous multi-stream TableJoinTask.
-        """
-        with self._lock:
-            if task not in self.join_tasks:
-                self.join_tasks.append(task)
-
-    def remove_join_task(self, task: 'TableJoinTask') -> None:
-        """
-        Removes a continuous multi-stream TableJoinTask.
-        """
-        with self._lock:
-            if task in self.join_tasks:
-                self.join_tasks.remove(task)
 
     def subscribe(self, table_name: str, callback: Callable[[str, pa.Table], None]) -> None:
         """
@@ -314,23 +296,6 @@ class RillEngine:
                         severity="error",
                         source=f"engine.connector.{connector.target_table}",
                         message=f"Connector ingestion error for table '{connector.target_table}': {e}",
-                        detail=traceback.format_exc()
-                    )
-
-            # 2. Continuous Multi-stream Table Join tasks
-            for jtask in self.join_tasks:
-                try:
-                    j_t0 = time.perf_counter()
-                    jtask.execute(self)
-                    j_t1 = time.perf_counter()
-                    self.metrics.record_task_latency(jtask.name if hasattr(jtask, 'name') else 'join_task', (j_t1 - j_t0) * 1000.0)
-                except Exception as e:
-                    logger.exception(f"Error in table join task")
-                    task_name = jtask.name if hasattr(jtask, 'name') else 'unknown'
-                    self.metrics.record_alert(
-                        severity="error",
-                        source=f"compute.join_task.{task_name}",
-                        message=f"Join task '{task_name}' failed: {e}",
                         detail=traceback.format_exc()
                     )
 
