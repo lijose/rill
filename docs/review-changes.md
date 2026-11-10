@@ -11,7 +11,7 @@ Python 3.12 because NumPy 2.5 requires it. Declared runtime bounds are
 compatibility check before expanding those bounds.
 
 ```sh
-python3 -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[dev]' -c constraints/test-duckdb20.txt
 python -m pytest --timeout=30
@@ -170,3 +170,6 @@ The final 0.1.2 browser check verified the default theme and Options menu after
 removing the theme picker. The earlier preview connectivity issue was resolved
 for that check. DOM behavior and access-control tests passed; the complete
 connected dashboard and responsive layouts have not yet been visually verified.
+
+See [operations and benchmark notes](operations.md) for alert cooldowns, actual
+memory-versus-disk measurements, and safeguards still awaiting approval.

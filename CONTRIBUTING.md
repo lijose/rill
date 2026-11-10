@@ -10,9 +10,9 @@ First off, thank you for considering contributing to **Rill**! We welcome bug re
    cd rill
    ```
 
-2. **Create a virtual environment**:
+2. **Create a virtual environment** (Python 3.12 for the modern profile):
    ```bash
-   python3 -m venv .venv
+   python3.12 -m venv .venv
    source .venv/bin/activate
    ```
 
@@ -49,6 +49,10 @@ First off, thank you for considering contributing to **Rill**! We welcome bug re
 5. Open a Pull Request on GitHub describing what your change accomplishes and why.
 
 ## Compatibility checks
+
+For benchmark methodology and current limitations, see
+[operations notes](docs/operations.md). Do not use a smoke-run throughput figure
+as a release performance guarantee.
 
 Use Python 3.12 with `constraints/test-duckdb20.txt`, and Python 3.10+ with
 `constraints/test-duckdb15.txt`. Run `npm ci --ignore-scripts && npm test` in
