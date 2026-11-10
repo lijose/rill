@@ -82,39 +82,36 @@ class MemoryConnector(BaseConnector):
             data: PyArrow Table, RecordBatch, list of RecordBatches, dict of arrays/lists, or list of row dicts.
         """
         with self._lock:
+            # Stage the incoming batches without copying the existing queue.
             if isinstance(data, pa.Table):
-                for batch in data.to_batches():
-                    self._buffer.append(batch)
-                    self._total_rows += batch.num_rows
+                batches = data.to_batches()
             elif isinstance(data, pa.RecordBatch):
-                self._buffer.append(data)
-                self._total_rows += data.num_rows
+                batches = [data]
             elif isinstance(data, list):
                 if not data:
                     return
-                if isinstance(data[0], pa.RecordBatch):
-                    self._buffer.extend(data)
-                    self._total_rows += sum(b.num_rows for b in data)
-                elif isinstance(data[0], dict):
-                    # List of row dicts -> convert to column dict then pa.RecordBatch
-                    keys = data[0].keys()
-                    col_dict = {k: [row.get(k, None) for row in data] for k in keys}
-                    batch = pa.RecordBatch.from_pydict(col_dict, schema=self.schema)
-                    self._buffer.append(batch)
-                    self._total_rows += batch.num_rows
+                if all(isinstance(item, pa.RecordBatch) for item in data):
+                    batches = data
+                elif all(isinstance(item, dict) for item in data):
+                    keys = self.schema.names if self.schema is not None else dict.fromkeys(k for row in data for k in row)
+                    columns = {key: [row.get(key) for row in data] for key in keys}
+                    batches = [pa.RecordBatch.from_pydict(columns, schema=self.schema)]
                 else:
-                    raise TypeError(f"Unsupported list item type: {type(data[0])}")
+                    raise TypeError("Expected a list of RecordBatches or row dictionaries")
             elif isinstance(data, dict):
-                # Dict of columns -> pa.RecordBatch
                 try:
                     batch = pa.RecordBatch.from_pydict(data, schema=self.schema)
                 except (pa.ArrowInvalid, KeyError, ValueError):
                     batch = pa.RecordBatch.from_pydict(data)
-                self._buffer.append(batch)
-                self._total_rows += batch.num_rows
+                batches = [batch]
             else:
                 raise TypeError(f"Unsupported push data type: {type(data)}")
-
+            incoming_rows = sum(batch.num_rows for batch in batches)
+            if (self.on_overflow == "error" and self.max_buffer_records is not None
+                    and self._total_rows + incoming_rows > self.max_buffer_records):
+                raise BufferError(f"Connector buffer for {self.target_table!r} exceeded max_buffer_records ({self.max_buffer_records})")
+            self._buffer.extend(batches)
+            self._total_rows += incoming_rows
             self._enforce_backpressure()
 
     def read_batch(self) -> Optional[pa.Table]:
@@ -125,10 +122,10 @@ class MemoryConnector(BaseConnector):
             if not self._buffer:
                 return None
             batches = list(self._buffer)
+            tables = [pa.Table.from_batches([batch]) for batch in batches]
+            result = pa.concat_tables(tables, promote_options="default")
+            if self.schema is not None and set(result.column_names) == set(self.schema.names):
+                result = result.select(self.schema.names).cast(self.schema)
             self._buffer.clear()
             self._total_rows = 0
-
-        try:
-            return pa.Table.from_batches(batches, schema=self.schema)
-        except (pa.ArrowInvalid, KeyError, ValueError):
-            return pa.Table.from_batches(batches)
+            return result

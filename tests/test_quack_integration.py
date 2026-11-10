@@ -1,4 +1,5 @@
 import time
+import os
 import pytest
 import pyarrow as pa
 import duckdb
@@ -23,56 +24,62 @@ def test_quack_metrics_registration():
     assert "pyarrow_max_memory" in schema_names
 
 
-def test_quack_server_startup_and_stop():
-    # 2. Test that RillEngine correctly initializes the Quack server background thread
+def test_quack_server_startup_and_stop(monkeypatch):
+    # Exercise connection ownership and readiness without downloading extensions.
+    def serve(self):
+        assert self._quack_con is not self.metrics_con
+        assert self._quack_con.execute("SELECT 1").fetchone() == (1,)
+        self.quack_ready.set()
+    monkeypatch.setattr(RillEngine, "_run_quack_server", serve)
     engine = RillEngine(quack_address="quack:127.0.0.1:9499")
-    
-    # Start the engine
     engine.start()
-    time.sleep(0.5)
-    
-    # Check if the thread was created and started
-    assert engine._quack_thread is not None
-    import threading
-    assert isinstance(engine._quack_thread, threading.Thread)
-        
-    # Stop the engine and verify it cleans up
+    assert engine.quack_ready.wait(2)
+    assert engine.last_error is None
+    # The fake server does not own an extension server to stop.
+    engine.quack_ready.clear()
     engine.stop()
     assert engine._quack_thread is None
 
 
-def test_quack_client_connection():
-    # 3. Attempt to load quack extension to see if it is available locally
-    con = duckdb.connect()
-    try:
-        con.execute("INSTALL quack;")
-        con.execute("LOAD quack;")
-        quack_available = True
-    except Exception:
-        try:
-            con.execute("INSTALL quack FROM core_nightly;")
-            con.execute("LOAD quack;")
-            quack_available = True
-        except Exception:
-            quack_available = False
-            
-    if not quack_available:
-        pytest.skip("Quack extension not available on this platform/version of DuckDB")
-        
-    # If quack is available, run end-to-end server/client test
-    engine = RillEngine(quack_address="quack:127.0.0.1:9498")
-    engine.start()
-    time.sleep(1.0)
-    
-    try:
-        # If server failed to start, quack_token won't be set
-        if not engine.quack_token:
-            pytest.skip("Quack server failed to start (no token assigned)")
+@pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("RILL_TEST_QUACK") != "1", reason="Set RILL_TEST_QUACK=1 for real Quack integration")
 
-        client_con = duckdb.connect()
-        client_con.execute("LOAD quack;")
-        client_con.execute(f"ATTACH 'quack:127.0.0.1:9498' AS remote (TOKEN '{engine.quack_token}');")
-        res = client_con.execute("SELECT * FROM remote.rill_metrics").fetchall()
-        assert len(res) > 0
+def test_quack_client_connection(tmp_path):
+    import socket
+    extension_dir = str(tmp_path / "extensions")
+    with duckdb.connect(config={"extension_directory": extension_dir}) as con:
+        loaded = False
+        errors = []
+        for repository in ("", " FROM community", " FROM core_nightly"):
+            try:
+                con.execute("INSTALL quack" + repository)
+                con.execute("LOAD quack")
+                loaded = True
+                break
+            except duckdb.Error as exc:
+                errors.append(str(exc))
+        if not loaded:
+            pytest.fail("Quack extension unavailable: " + errors[-1])
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    address = f"quack:127.0.0.1:{port}"
+    engine = RillEngine(quack_address=address, quack_token="integration-test-token")
+    engine.metrics_con.execute("SET extension_directory = ?", [extension_dir])
+    engine.start()
+    try:
+        assert engine.quack_ready.wait(15), str(engine.quack_error)
+        with duckdb.connect(config={"extension_directory": extension_dir}) as client:
+            client.execute("LOAD quack")
+            client.execute(f"ATTACH '{address}' AS remote (TOKEN 'integration-test-token')")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                rows = client.execute("SELECT * FROM remote.rill_metrics").fetchall()
+                if rows:
+                    break
+                time.sleep(.05)
+            assert rows
+            assert engine.last_error is None
     finally:
-        engine.stop()
+        engine.stop(timeout=15)
+    assert engine._closed

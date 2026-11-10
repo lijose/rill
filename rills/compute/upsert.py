@@ -64,12 +64,22 @@ def _ensure_metadata_columns(
         pass
     elif old_table is not None and old_table.num_rows > 0 and primary_key is not None and primary_key != "" and primary_key != []:
         keys_list = [primary_key] if isinstance(primary_key, str) else list(primary_key)
-        try:
-            lookup = new_table.join(old_table.select(keys_list + ["z_insert_ts"]), keys=keys_list, join_type="left outer")
-            filled = pc.if_else(pc.is_null(lookup.column("z_insert_ts")), pa.scalar(ts, type=pa.float64()), lookup.column("z_insert_ts"))
-            new_table = new_table.append_column("z_insert_ts", filled)
-        except Exception:
-            new_table = new_table.append_column("z_insert_ts", pa.array([ts] * new_table.num_rows, type=pa.float64()))
+        # Hash joins may reorder rows. Carry an ordinal through the lookup and
+        # restore it before attaching timestamps to the original incoming table.
+        ordinal = "__rill_row_position"
+        while ordinal in new_table.column_names or ordinal in old_table.column_names:
+            ordinal += "_"
+        lookup_input = _decode_dictionary_columns(new_table.select(keys_list)).append_column(
+            ordinal, pa.array(range(new_table.num_rows), type=pa.int64())
+        )
+        lookup = lookup_input.join(
+            _decode_dictionary_columns(old_table.select(keys_list + ["z_insert_ts"])),
+            keys=keys_list, join_type="left outer"
+        ).sort_by(ordinal)
+        if lookup.num_rows != new_table.num_rows:
+            raise ValueError("Existing state contains duplicate primary keys")
+        filled = pc.fill_null(lookup.column("z_insert_ts"), pa.scalar(ts, type=pa.float64()))
+        new_table = new_table.append_column("z_insert_ts", filled)
     else:
         new_table = new_table.append_column("z_insert_ts", pa.array([ts] * new_table.num_rows, type=pa.float64()))
 
@@ -115,15 +125,16 @@ def upsert_table(
     if primary_key:
         import duckdb
         keys_list = [primary_key] if isinstance(primary_key, str) else list(primary_key)
-        partition_by = ", ".join(f'"{k}"' for k in keys_list)
-        try:
-            query = f"SELECT * EXCLUDE (_row_id) FROM (SELECT *, row_number() OVER () as _row_id FROM new_table) QUALIFY row_number() OVER (PARTITION BY {partition_by} ORDER BY _row_id DESC) = 1"
-            res = duckdb.sql(query).arrow()
-            if hasattr(res, "read_all"):
-                res = res.read_all()
-            new_table = res
-        except Exception:
-            pass
+        partition_by = ", ".join('"' + k.replace('"', '""') + '"' for k in keys_list)
+        row_id = "__rill_dedup_position"
+        while row_id in new_table.column_names:
+            row_id += "_"
+        # A private connection avoids sharing DuckDB's module-global connection
+        # between independent table writers.
+        with duckdb.connect() as con:
+            con.register("incoming", new_table)
+            query = f'SELECT * EXCLUDE ("{row_id}") FROM (SELECT *, row_number() OVER () as "{row_id}" FROM incoming) QUALIFY row_number() OVER (PARTITION BY {partition_by} ORDER BY "{row_id}" DESC) = 1 ORDER BY "{row_id}"'
+            new_table = con.sql(query).to_arrow_table()
 
     # Ensure metadata columns exist and preserve z_insert_ts for updated rows
     old_table, new_table = _ensure_metadata_columns(new_table, old_table, primary_key, current_time)

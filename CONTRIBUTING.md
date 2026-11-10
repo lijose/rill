@@ -19,7 +19,7 @@ First off, thank you for considering contributing to **Rill**! We welcome bug re
 3. **Install in editable mode with development dependencies**:
    ```bash
    pip install --upgrade pip
-   pip install -e .[dev,connectors]
+   pip install -e '.[dev,connectors]' -c constraints/test-duckdb20.txt
    ```
 
 4. **Run the Test Suite**:
@@ -44,6 +44,16 @@ First off, thank you for considering contributing to **Rill**! We welcome bug re
 
 1. Fork the repo and create your feature branch from `main` (`git checkout -b feature/amazing-feature`).
 2. Add automated tests for any new behavior in `tests/`.
-3. Verify that `pytest tests/ -v` succeeds (`27+ tests passing`).
+3. Verify that `pytest tests/ -v` succeeds (including the regression suite).
 4. Commit your changes (`git commit -m 'feat: add amazing feature'`) and push to your branch (`git push origin feature/amazing-feature`).
 5. Open a Pull Request on GitHub describing what your change accomplishes and why.
+
+## Compatibility checks
+
+Use Python 3.12 with `constraints/test-duckdb20.txt`, and Python 3.10+ with
+`constraints/test-duckdb15.txt`. Run `npm ci --ignore-scripts && npm test` in
+`dashboard/` after dashboard changes. `pytest` intentionally excludes manual
+scripts in `local_test/`. Real Quack integration is opt-in; see
+[review changes](docs/review-changes.md) for the command and changed contracts.
+
+Requirement changes and new features require user approval before implementation.

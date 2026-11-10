@@ -4,6 +4,7 @@ Evicts expired or excess records from PyArrow tables using C++ vectorized comput
 """
 
 import time
+import math
 from typing import Optional
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -28,6 +29,13 @@ class RetentionPolicy:
             max_age_seconds: Maximum age of rows in seconds. Rows older than this threshold are evicted.
             time_column: Name of the timestamp column used for evaluating `max_age_seconds` (default: 'z_insert_ts').
         """
+        if max_rows is not None and (isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows <= 0):
+            raise ValueError("max_rows must be a positive integer")
+        if max_age_seconds is not None:
+            if not math.isfinite(max_age_seconds) or max_age_seconds <= 0:
+                raise ValueError("max_age_seconds must be positive and finite")
+            if not time_column:
+                raise ValueError("time_column is required for age retention")
         self.max_rows = max_rows
         self.max_age_seconds = max_age_seconds
         self.time_column = time_column
@@ -50,7 +58,9 @@ class RetentionPolicy:
             current_time = time.time()
 
         # 1. Apply TTL / time-based eviction
-        if self.max_age_seconds is not None and self.time_column in table.column_names:
+        if self.max_age_seconds is not None:
+            if self.time_column not in table.column_names:
+                raise ValueError(f"Retention time column {self.time_column!r} is missing")
             col = table.column(self.time_column)
             col_type = col.type
 
@@ -74,9 +84,8 @@ class RetentionPolicy:
 
                 # Filter table in C++ memory
                 table = pc.filter(table, mask)
-            except Exception:
-                # If comparison fails due to schema/type mismatch, skip time filter safely
-                pass
+            except (pa.ArrowException, TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid retention time column {self.time_column!r}") from exc
 
         # 2. Apply max_rows (FIFO slicing)
         if self.max_rows is not None and self.max_rows > 0:

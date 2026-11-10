@@ -36,7 +36,9 @@ class RillEngine:
         quack_token: Optional[str] = None,
         auto_compact_chunks: int = 32,
         metrics_db_path: Optional[str] = None,
-        metrics_ttl_seconds: float = 600.0
+        metrics_ttl_seconds: float = 600.0,
+        alert_ttl_seconds: float = 3600.0,
+        query_history_ttl_seconds: float = 600.0
     ):
         """
         Args:
@@ -50,6 +52,21 @@ class RillEngine:
             auto_compact_chunks: Threshold chunk count for automatic de-fragmentation during step (default: 32).
             metrics_db_path: File path for the metrics DuckDB database. Defaults to 'rill_metrics.db' in CWD.
         """
+        import math
+        for label, value in (("metrics_ttl_seconds", metrics_ttl_seconds),
+                             ("alert_ttl_seconds", alert_ttl_seconds),
+                             ("query_history_ttl_seconds", query_history_ttl_seconds)):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{label} must be positive and finite")
+        self._lock = threading.RLock()
+        self._closed = False
+        self.last_error: Optional[Exception] = None
+        self.quack_error: Optional[Exception] = None
+        self.quack_ready = threading.Event()
+        self._quack_con = None
+        self._history_tables = set()
+        self.alert_ttl_seconds = alert_ttl_seconds
+        self.query_history_ttl_seconds = query_history_ttl_seconds
         self.trigger_interval_ms = trigger_interval_ms
         self.auto_compact_chunks = auto_compact_chunks
         self._tables: Dict[str, RillTable] = {}
@@ -84,7 +101,6 @@ class RillEngine:
         self._quack_thread: Optional[threading.Thread] = None
 
 
-        self._lock = threading.RLock()
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -187,7 +203,11 @@ class RillEngine:
         Note: The underlying connection is available at `metrics_con`, but this method
         is the preferred interface for reading metrics.
         """
-        return self.metrics_con.execute(sql).fetch_arrow_table()
+        from .sql_validation import validate_read_only_sql
+        with self._lock:
+            self._ensure_open()
+            validate_read_only_sql(self.metrics_con, sql)
+            return self.metrics_con.sql(sql).to_arrow_table()
 
     # ── User-Facing Alert API ────────────────────────────────────────────
 
@@ -271,6 +291,7 @@ class RillEngine:
         records_in_step = 0
 
         with self._lock:
+            self._ensure_open()
             # 1. Ingestion and vectorized upsert
             connectors_snapshot = list(self.connectors)
             for connector in connectors_snapshot:
@@ -332,6 +353,9 @@ class RillEngine:
                 for task_name in self.metrics.task_latencies.keys() if hasattr(self.metrics, 'task_latencies') else []:
                     table_names.append(f"task_metrics_{sanitize(task_name)}")
                 
+                table_names.extend(row[0] for row in self.metrics_con.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+                ).fetchall())
                 # Maintain rill_tables
                 self.metrics_con.execute("CREATE OR REPLACE TABLE rill_tables (table_name VARCHAR)")
                 if table_names:
@@ -390,17 +414,28 @@ class RillEngine:
         Starts the background micro-batch processing loop and all attached connectors.
         """
         with self._lock:
+            self._ensure_open()
             if self._running:
                 return
+            self.last_error = None
+            self.quack_error = None
+            self.quack_ready.clear()
+            started = []
+            try:
+                for connector in self.connectors:
+                    connector.start()
+                    started.append(connector)
+            except Exception:
+                for connector in started:
+                    connector.stop()
+                raise
             self._running = True
-
-            for connector in self.connectors:
-                connector.start()
 
             self._thread = threading.Thread(target=self._run_loop, name="RillEngineLoop", daemon=True)
             self._thread.start()
 
             if self.quack_address is not None:
+                self._quack_con = self.metrics_con.cursor()
                 self._quack_thread = threading.Thread(
                     target=self._run_quack_server,
                     name="RillQuackServer",
@@ -408,46 +443,63 @@ class RillEngine:
                 )
                 self._quack_thread.start()
 
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("RillEngine is closed; create a new engine to restart")
+
+    def __enter__(self):
+        self._ensure_open()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop()
+
     def stop(self, timeout: float = 2.0) -> None:
-        """
-        Stops the background processing loop and cleans up all connectors.
+        """Stop workers and close owned connections, including synchronous engines.
+
+        stop() is idempotent and terminal. An externally supplied live connection
+        remains owned by its caller. A timed-out worker retains its connections;
+        call stop() again after it exits rather than closing under an active call.
         """
         with self._lock:
-            if not self._running:
+            if self._closed:
                 return
             self._running = False
-
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
-            self._thread = None
-
-        if self._quack_thread is not None:
-            try:
-                # Signal the Quack server to stop via the main connection
-                self.metrics_con.execute("LOAD quack;")
-                self.metrics_con.execute("CALL quack_stop(?);", [self.quack_address])
-            except Exception:
-                logger.exception("Error stopping quack server")
-            
-            if self._quack_thread.is_alive():
-                self._quack_thread.join(timeout=timeout)
-            self._quack_thread = None
-
+        for worker in (self._thread, self._quack_thread):
+            if worker is threading.current_thread():
+                raise RuntimeError("Call stop() from outside the engine worker")
+            if worker is not None:
+                worker.join(timeout=timeout)
+                if worker.is_alive():
+                    raise TimeoutError(f"{worker.name} did not stop within {timeout}s")
         with self._lock:
+            if self._quack_con is not None:
+                try:
+                    if self.quack_ready.is_set():
+                        self._quack_con.execute("CALL quack_stop(?);", [self.quack_address])
+                except Exception:
+                    logger.exception("Error stopping Quack server")
+                finally:
+                    self._quack_con.close()
+                    self._quack_con = None
+                    self.quack_ready.clear()
+            self._thread = self._quack_thread = None
             for connector in self.connectors:
                 connector.stop()
-
-        # Close the metrics database connection to prevent resource leaks
-        try:
+            self.metrics.write_to_duckdb(self.metrics_con, self)
+            with self.metrics._lock:
+                if self.metrics._alert_buffer:
+                    raise RuntimeError("Alerts remain pending after flush; retry stop() when storage recovers")
             self.metrics_con.close()
-        except Exception:
-            logger.exception("Error closing metrics_con")
+            if self.duckdb.owns_connection:
+                self.duckdb.con.close()
+            self._closed = True
 
     def _run_quack_server(self) -> None:
         """
         Runs the DuckDB Quack server in a background thread against the metrics DB.
         """
-        con = self.metrics_con
+        con = self._quack_con
 
         try:
             con.execute("INSTALL quack;")
@@ -463,20 +515,23 @@ class RillEngine:
         try:
             con.execute("LOAD quack;")
         except Exception as e:
+            self.quack_error = e
             logger.error(f"[Rill Quack Server] Error loading quack extension: {e}")
             return
 
         try:
             if self.quack_token:
-                res = con.execute("CALL quack_serve(?, token=?, allow_other_hostname => true);", [self.quack_address, self.quack_token]).fetchone()
+                res = con.execute("CALL quack_serve(?, token=?, allow_other_hostname => true);", [self.quack_address, self.quack_token]).fetchall()[0]
             else:
-                res = con.execute("CALL quack_serve(?, allow_other_hostname => true);", [self.quack_address]).fetchone()
+                res = con.execute("CALL quack_serve(?, allow_other_hostname => true);", [self.quack_address]).fetchall()[0]
             if res and len(res) >= 3 and not self.quack_token:
                 self.quack_token = str(res[2])
+            self.quack_ready.set()
             token_display = f" | Auth Token: {self.quack_token}" if self.quack_token else ""
             logger.info(f"[Rill Quack Server] Active at {res[0] if res else self.quack_address}{token_display}")
             print(f"[Rill Quack Server] Active at {res[0] if res else self.quack_address}{token_display}")
         except Exception as e:
+            self.quack_error = e
             logger.error(f"[Rill Quack Server] Error serving at {self.quack_address}: {e}")
             print(f"[Rill Quack Server] Error serving at {self.quack_address}: {e}")
 
@@ -486,7 +541,14 @@ class RillEngine:
         """
         while self._running:
             step_start = time.perf_counter()
-            self.step()
+            try:
+                self.step()
+            except Exception as exc:
+                self.last_error = exc
+                self._running = False
+                logger.exception("Engine loop stopped after an unexpected failure")
+                self.metrics.record_alert("error", "engine.loop", str(exc), traceback.format_exc())
+                return
             elapsed_ms = (time.perf_counter() - step_start) * 1000.0
 
             sleep_ms = self.trigger_interval_ms - elapsed_ms

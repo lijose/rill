@@ -69,7 +69,8 @@ class DuckDBBridge:
         self.engine = engine
         self.use_prepared_statements = use_prepared_statements
         self._prepared_cache: Dict[str, Any] = {}
-        self._lock = threading.RLock()
+        self._lock = engine._lock
+        self.owns_connection = connection is None
         if connection is not None:
             self.con = connection
             self.db_name = None
@@ -120,7 +121,7 @@ class DuckDBBridge:
         """
         with self._lock:
             self.register_tables()
-            res = self.con.execute(sql).arrow()
+            res = self.con.sql(sql).to_arrow_table()
             if hasattr(res, "read_all"):
                 res = res.read_all()
             return res
@@ -146,7 +147,7 @@ class DuckDBBridge:
                         # DuckDB internally caches query plans. When use_prepared_statements
                         # is enabled, we track executed queries in _prepared_cache to signal
                         # that the plan has been submitted and is being reused by the engine.
-                        res = self.con.execute(task.query).arrow()
+                        res = self.con.sql(task.query).to_arrow_table()
                         if task.use_prepared_statements and task.query not in self._prepared_cache:
                             self._prepared_cache[task.query] = task.query
 
@@ -160,6 +161,7 @@ class DuckDBBridge:
                             primary_key=task.primary_key
                         )
                         target_table.replace_state(result_table)
+                        self.con.register(task.output_table, target_table.to_arrow())
 
                         # NEW: Insert historical snapshot into metrics_con for dashboard querying
                         metrics_con = self.engine.metrics_con
@@ -168,8 +170,10 @@ class DuckDBBridge:
                         try:
                             import datetime
                             iso_ts = datetime.datetime.now().isoformat()
-                            metrics_con.execute(f'CREATE TABLE IF NOT EXISTS "{task.output_table}" AS SELECT *, \'{iso_ts}\' AS insert_ts FROM "{temp_view}" WHERE 1=0')
-                            metrics_con.execute(f'INSERT INTO "{task.output_table}" SELECT *, \'{iso_ts}\' AS insert_ts FROM "{temp_view}"')
+                            quoted_output = '"' + task.output_table.replace('"', '""') + '"'
+                            metrics_con.execute(f'CREATE TABLE IF NOT EXISTS {quoted_output} AS SELECT *, CAST(? AS VARCHAR) AS insert_ts FROM "{temp_view}" WHERE 1=0', [iso_ts])
+                            metrics_con.execute(f'INSERT INTO {quoted_output} SELECT *, CAST(? AS VARCHAR) AS insert_ts FROM "{temp_view}"', [iso_ts])
+                            self.engine._history_tables.add(task.output_table)
                         finally:
                             metrics_con.unregister(temp_view)
 

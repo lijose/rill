@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Quack Worker for Rill Dashboard.
-Connects to a remote Rill DuckDB Quack server using DuckDB v1.5.4.
+Connects to a remote Rill DuckDB Quack server using the installed compatible DuckDB version.
 Provides a metrics polling thread, engine alerts polling, and a stdin-reader thread for custom queries.
 """
 
@@ -9,11 +9,15 @@ import sys
 import time
 import json
 import argparse
+import os
 import duckdb
 import threading
 import re
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from rills.sql_validation import validate_read_only_sql
 
-# Monkey-patch json.dumps to handle DuckDB types like Decimal and datetime
+# Encode DuckDB values without changing the global JSON encoder.
 _orig_dumps = json.dumps
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -27,27 +31,29 @@ class CustomJSONEncoder(json.JSONEncoder):
         except TypeError:
             return str(obj)
 
-json.dumps = lambda obj, **kwargs: _orig_dumps(obj, cls=CustomJSONEncoder, **kwargs)
+dumps = lambda obj, **kwargs: _orig_dumps(obj, cls=CustomJSONEncoder, **kwargs)
 
 db_lock = threading.RLock()
 # Track scheduled dashboard queries
 scheduled_queries = {}
 deleted_scheduled_queries = set()
 
-ALLOWLIST_REGEX = re.compile(r'^\s*(SELECT|WITH|EXPLAIN|PRAGMA\s+show_tables|DESCRIBE|SHOW)\b', re.IGNORECASE)
-
 # Track the last alert timestamp we've seen to only send new alerts
 _last_alert_ts = ""
 
+
 def is_allowed_sql(sql):
-    # Strip comments and trim
-    stripped = "\n".join([line for line in sql.split('\n') if not line.strip().startswith('--')])
-    return bool(ALLOWLIST_REGEX.match(stripped))
+    try:
+        with duckdb.connect() as validator:
+            validate_read_only_sql(validator, sql)
+        return True
+    except (ValueError, duckdb.Error):
+        return False
+
 
 def execute_query(con, sql):
-    if not is_allowed_sql(sql):
-        raise ValueError("Statement not allowed. Only SELECT, WITH, EXPLAIN, SHOW, PRAGMA show_tables, DESCRIBE are permitted.")
-    
+    validate_read_only_sql(con, sql)
+
     # Intercept queries for information_schema.tables to workaround Quack catalog limitations
     if "information_schema.tables" in sql.lower():
         sql = "SELECT 'remote_db' AS table_catalog, 'main' AS table_schema, table_name FROM remote_db.rill_tables;"
@@ -80,13 +86,13 @@ def metrics_loop(con):
                             data[row[1]] = row[2]
                         # Also include the timestamp as a top-level or in data
                         data["timestamp"] = res[0][0]
-                        print(json.dumps({"type": "metrics", "data": data}), flush=True)
+                        print(dumps({"type": "metrics", "data": data}), flush=True)
                     else:
-                        print(json.dumps({"error": "No metrics found in remote_db.rill_metrics"}), flush=True)
+                        print(dumps({"error": "No metrics found in remote_db.rill_metrics"}), flush=True)
                 else:
-                    print(json.dumps({"error": "No metrics found in remote_db.rill_metrics"}), flush=True)
+                    print(dumps({"error": "No metrics found in remote_db.rill_metrics"}), flush=True)
         except Exception as e:
-            print(json.dumps({"error": f"Metrics query error: {e}"}), flush=True)
+            print(dumps({"error": f"Metrics query error: {e}"}), flush=True)
 
         # Poll for new engine/user alerts
         try:
@@ -111,7 +117,7 @@ def metrics_loop(con):
                         })
                         if row[0] > _last_alert_ts:
                             _last_alert_ts = row[0]
-                    print(json.dumps({"type": "engine_alerts", "data": alerts_data}), flush=True)
+                    print(dumps({"type": "engine_alerts", "data": alerts_data}), flush=True)
         except Exception as e:
             # rill_alerts table may not exist yet, that's ok
             if "rill_alerts" not in str(e).lower() and "not found" not in str(e).lower():
@@ -132,7 +138,7 @@ def metrics_loop(con):
                                 "last_run": 0
                             }
                             # Broadcast to the UI
-                            print(json.dumps({
+                            print(dumps({
                                 "type": "scheduled_query_sync",
                                 "queryId": q_id,
                                 "config": {
@@ -157,7 +163,7 @@ def metrics_loop(con):
                 if now - qinfo['last_run'] >= qinfo['interval']:
                     try:
                         cols, rows, elapsed = execute_query(con, qinfo['sql'])
-                        print(json.dumps({
+                        print(dumps({
                             "type": "scheduled_result",
                             "queryId": query_id,
                             "columns": cols,
@@ -166,7 +172,7 @@ def metrics_loop(con):
                             "ranAt": now * 1000
                         }), flush=True)
                     except Exception as e:
-                        print(json.dumps({
+                        print(dumps({
                             "type": "scheduled_result",
                             "queryId": query_id,
                             "error": str(e),
@@ -191,7 +197,7 @@ def stdin_loop(con):
                 try:
                     with db_lock:
                         cols, rows, elapsed = execute_query(con, sql)
-                    print(json.dumps({
+                    print(dumps({
                         "type": "query_result",
                         "queryId": query_id,
                         "columns": cols,
@@ -199,7 +205,7 @@ def stdin_loop(con):
                         "elapsed_ms": elapsed
                     }), flush=True)
                 except Exception as e:
-                    print(json.dumps({
+                    print(dumps({
                         "type": "query_result",
                         "queryId": query_id,
                         "error": str(e)
@@ -211,6 +217,8 @@ def stdin_loop(con):
                 interval = req.get("intervalSeconds", 0)
                 if interval > 0:
                     with db_lock:
+                        validate_read_only_sql(con, sql)
+                        deleted_scheduled_queries.discard(query_id)
                         scheduled_queries[query_id] = {
                             "sql": sql,
                             "interval": interval,
@@ -224,7 +232,7 @@ def stdin_loop(con):
                         del scheduled_queries[query_id]
                     deleted_scheduled_queries.add(query_id)
         except Exception as e:
-            print(json.dumps({"error": f"Stdin loop error: {e}"}), flush=True)
+            print(dumps({"error": f"Stdin loop error: {e}"}), flush=True)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -232,24 +240,27 @@ def main():
     parser.add_argument("--token", default="", help="Optional authentication token")
     args = parser.parse_args()
 
-    con = duckdb.connect(":memory:")
+    config = {}
+    if os.environ.get("RILL_EXTENSION_DIRECTORY"):
+        config["extension_directory"] = os.environ["RILL_EXTENSION_DIRECTORY"]
+    con = duckdb.connect(":memory:", config=config)
     try:
         con.execute("INSTALL quack; LOAD quack;")
     except Exception as e:
-        print(json.dumps({"error": f"Failed to load quack extension: {e}"}), flush=True)
+        print(dumps({"error": f"Failed to load quack extension: {e}"}), flush=True)
         sys.exit(1)
 
-    attach_cmd = f"ATTACH '{args.address}' AS remote_db"
+    attach_cmd = "ATTACH '" + args.address.replace("'", "''") + "' AS remote_db"
     if args.token:
-        attach_cmd += f" (TOKEN '{args.token}')"
+        attach_cmd += " (TOKEN '" + args.token.replace("'", "''") + "')"
 
     try:
         con.execute(attach_cmd)
     except Exception as e:
-        print(json.dumps({"error": f"Connection failed to '{args.address}': {e}"}), flush=True)
+        print(dumps({"error": f"Connection failed to '{args.address}': {e}"}), flush=True)
         sys.exit(1)
 
-    print(json.dumps({"status": "connected", "address": args.address}), flush=True)
+    print(dumps({"status": "connected", "address": args.address}), flush=True)
 
     metrics_thread = threading.Thread(target=metrics_loop, args=(con,), daemon=True)
     metrics_thread.start()

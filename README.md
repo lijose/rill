@@ -1,6 +1,6 @@
 # <img src="dashboard/public/logo.png" width="40" valign="middle" alt="Rill Logo"> Rill Streaming Engine (rills)
 
-[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyArrow](https://img.shields.io/badge/Powered%20by-PyArrow-orange.svg)](https://arrow.apache.org/)
 [![DuckDB](https://img.shields.io/badge/SQL%20Engine-DuckDB-yellow.svg)](https://duckdb.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -11,6 +11,9 @@
 By bypassing traditional Python data structures and the Global Interpreter Lock (GIL) where possible, Rill ingests continuous event streams directly into C++ contiguous memory (`pyarrow.Table`). It leverages a scheduled processing trigger to buffer, join, aggregate, and query incoming data efficiently without the overhead of event-by-event Python loops.
 
 From raw data ingestion to complex multi-stream joins, aggregations, scheduled SQL pipelines, and **structured alerting**, every operation is strictly contained within C++ vectorized memory, making Rill the ideal zero-infrastructure solution for live data processing.
+
+See [dependency support, changed defaults, and dashboard access](docs/review-changes.md)
+for the approved correctness update and reproducible setup commands.
 
 ---
 

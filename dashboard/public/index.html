@@ -1,39 +1,34 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
+<!DOCTYPE html><html lang="en"><head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rill Streaming Engine Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
     <link rel="icon" type="image/png" href="logo.png">
     <link rel="stylesheet" href="index.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+    <script src="/vendor/chart.js"></script>
+    <script src="/vendor/hammer.js"></script>
+    <script src="/vendor/zoom.js"></script>
 </head>
 <body>
     <!-- Floating Alert Toast Container -->
-    <div id="alert-toast-container" class="alert-toast-container"></div>
+    <div id="alert-toast-container" class="alert-toast-container" aria-live="polite"></div>
 
     <div class="app-container">
         <!-- Header -->
         <header class="app-header">
             <div class="logo-area">
                 <img src="logo.png" alt="Rill Logo" class="logo-img">
-                <h1>Rill <span>Metrics Console</span></h1>
-            </div>
-            <div class="header-controls" style="display: flex; gap: 15px; align-items: center;">
-                <div class="theme-picker" style="display: flex; gap: 6px; align-items: center; border-right: 1px solid var(--border-color); padding-right: 15px;">
-                    <label for="bg-color-picker" style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">Theme</label>
-                    <input type="color" id="bg-color-picker" value="#0b0f19" style="background: none; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; width: 24px; height: 24px; padding: 0;">
-                </div>
+                <h1>Rill <span>Stream monitor</span></h1>
+            <div class="connection-context">
+                        <span class="connected-addr">Serving connection: <strong id="current-connected-addr">-</strong></span>
+                    </div></div>
+            <div class="header-controls">
+
                 <div class="connection-status" id="connection-status-pill">
                     <span class="status-dot"></span>
                     <span class="status-text">Disconnected</span>
                 </div>
-            </div>
+            <details class="header-menu"><summary>Options</summary><div class="header-menu-body"><button id="disconnect-btn" class="btn btn-secondary">Disconnect Server</button></div></details></div>
         </header>
 
         <!-- Tabs Container -->
@@ -45,7 +40,7 @@
         </div>
 
         <!-- Main Body -->
-        <main class="app-main">
+        <main class="app-main"><section class="card connection-card hidden" id="dashboard-auth-panel"><h2>Dashboard access</h2><p class="subtitle">Enter the access token provided by your administrator.</p><form id="dashboard-auth-form" class="connect-form"><label for="dashboard-access-token">Access token</label><input id="dashboard-access-token" type="password" autocomplete="current-password" required=""><button class="btn btn-primary">Unlock dashboard</button></form><p id="dashboard-auth-error" role="alert"></p></section>
             <!-- Connection Card -->
             <section class="card connection-card" id="connection-panel">
                 <h2>Connect to Rill Quack Server</h2>
@@ -53,7 +48,7 @@
                 <form id="connect-form" class="connect-form">
                     <div class="input-group">
                         <label for="quack-address">Quack Server Address</label>
-                        <input type="text" id="quack-address" placeholder="e.g. quack:127.0.0.1:9494" required value="quack:127.0.0.1:9494">
+                        <input type="text" id="quack-address" placeholder="e.g. quack:127.0.0.1:9494" required="" value="quack:127.0.0.1:9494">
                     </div>
                     <div class="input-group">
                         <label for="quack-token">Security Token (Optional)</label>
@@ -61,73 +56,58 @@
                     </div>
                     <button type="submit" id="connect-btn" class="btn btn-primary">Connect Console</button>
                 </form>
-                <div class="error-msg" id="connect-error"></div>
+                <div class="error-msg" id="connect-error" role="alert"></div>
             </section>
 
             <!-- Dashboard Grid (hidden until connected) -->
             <div class="dashboard-grid hidden" id="dashboard-content">
                 <!-- Main View Navigation Bar -->
-                <div class="dashboard-nav-tabs">
-                    <button class="nav-tab-btn active" id="tab-btn-metrics" data-view="metrics">
-                        <span></span> Metrics Console
-                    </button>
-                    <button class="nav-tab-btn" id="tab-btn-queries" data-view="queries">
-                        <span></span> Custom Queries
-                    </button>
-                    <button class="nav-tab-btn" id="tab-btn-alert-settings" data-view="alert-settings">
-                        <span></span> Alert Rules & Settings
-                    </button>
+                <div class="dashboard-toolbar"><div class="dashboard-nav-tabs">
+                    <button class="nav-tab-btn active" id="tab-btn-metrics" data-view="metrics">Overview</button>
+                    <button class="nav-tab-btn" id="tab-btn-queries" data-view="queries">Queries</button>
+                    <button class="nav-tab-btn" id="tab-btn-alert-settings" data-view="alert-settings">Alert settings</button>
                     <button class="nav-tab-btn" id="tab-btn-alert-logs" data-view="alert-logs">
                         <span></span> Alert Logs <span class="badge" id="alert-badge-count">0</span>
                     </button>
-                </div>
-
-                <!-- Global Control Bar & Connection Header -->
-                <div class="control-panel card">
-                    <div class="connected-info">
-                        <span class="connected-addr">Serving connection: <strong id="current-connected-addr">-</strong></span>
-                    </div>
-                    <div class="history-controls">
-                        <div id="metrics-time-controls" class="time-filter-group">
+                </div><div id="metrics-time-controls" class="time-filter-group">
                             <label for="history-filter">Time Range:</label>
                             <select id="history-filter" class="select-control">
                                 <option value="30">Last 30 seconds</option>
                                 <option value="60">Last 60 seconds</option>
-                                <option value="90" selected>Last 90 seconds</option>
+                                <option value="90" selected="">Last 90 seconds</option>
                                 <option value="100">Last 100 seconds</option>
                                 <option value="180">Last 180 seconds</option>
                                 <option value="300">Last 300 seconds</option>
                                 <option value="all">All stored</option>
                             </select>
-                        </div>
-                        <button id="disconnect-btn" class="btn btn-secondary">Disconnect Server</button>
-                    </div>
-                </div>
+                        </div></div>
+
+                <!-- Global Control Bar & Connection Header -->
+
 
                 <!-- VIEW 1: METRICS CONSOLE -->
                 <div id="view-metrics" class="view-panel">
                     <!-- SECTION 1: SCHEDULED QUERY WIDGETS (Key Business Intelligence) -->
-                    <div class="section-container scheduled-spotlight" id="scheduled-widgets-container" style="display: none;">
-                        <div class="section-title-bar">
-                            <h2>Key Business Intelligence & Scheduled Queries</h2>
-                            <span class="section-tag" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border-color: rgba(245, 158, 11, 0.3);">Live Streaming</span>
-                        </div>
-                        <div id="scheduled-widgets-grid" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: stretch;">
-                            <!-- Live widgets appended here -->
-                        </div>
-                    </div>
+
 
                     <!-- SECTION 2: SYSTEM & ENGINE INFRASTRUCTURE -->
                     <div class="section-container system-spotlight">
-                        <div class="section-title-bar">
-                            <h2>Engine Infrastructure & Resource Utilization</h2>
-                            <span class="section-tag system-tag">Host & Process</span>
-                        </div>
+
 
                         <!-- Stats Counters Grid -->
-                        <div class="metrics-grid">
-                            <!-- CPU CARD -->
-                            <div class="card metric-card">
+                        <div class="metrics-grid"><div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">Throughput (RPS)</span>
+                                                                    </div>
+                                <div class="metric-value" id="val-rps">0.00 /s</div>
+                                <div class="metric-subtext" id="val-total-records">Total: 0 processed</div>
+                            </div><div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">Last Batch Latency</span>
+                                                                    </div>
+                                <div class="metric-value" id="val-latency">0.00 ms</div>
+                                <div class="metric-subtext" id="val-avg-latency">Avg: 0.00 ms</div>
+                            </div><div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">CPU Utilization</span>
                                                                     </div>
@@ -135,10 +115,7 @@
                                 <div class="progress-bar-container">
                                     <div class="progress-bar" id="bar-cpu" style="width: 0%"></div>
                                 </div>
-                            </div>
-
-                            <!-- System Memory CARD -->
-                            <div class="card metric-card">
+                            </div><div class="card metric-card">
                                 <div class="metric-header">
                                     <span class="metric-title">System Memory</span>
                                                                     </div>
@@ -147,44 +124,15 @@
                                 <div class="progress-bar-container">
                                     <div class="progress-bar" id="bar-mem" style="width: 0%"></div>
                                 </div>
-                            </div>
+                            </div></div><div id="scheduled-widgets-container" style="display: none;" class="section-container">
+                        <div class="section-title-bar">
+                            <h2>Business metrics</h2>
 
-                            <!-- PyArrow Memory CARD -->
-                            <div class="card metric-card">
-                                <div class="metric-header">
-                                    <span class="metric-title">PyArrow Allocated Memory</span>
-                                                                    </div>
-                                <div class="metric-value" id="val-pyarrow">0.00 MB</div>
-                                <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
-                            </div>
-                            
-                            <!-- DuckDB Memory CARD -->
-                            <div class="card metric-card">
-                                <div class="metric-header">
-                                    <span class="metric-title">DuckDB In-Memory Storage</span>
-                                                                    </div>
-                                <div class="metric-value" id="val-duckdb-live">Live: 0.00 MB</div>
-                                <div class="metric-subtext" id="val-duckdb-metrics">Metrics: 0.00 MB</div>
-                            </div>
-
-                            <!-- Throughput CARD -->
-                            <div class="card metric-card">
-                                <div class="metric-header">
-                                    <span class="metric-title">Throughput (RPS)</span>
-                                                                    </div>
-                                <div class="metric-value" id="val-rps">0.00 /s</div>
-                                <div class="metric-subtext" id="val-total-records">Total: 0 processed</div>
-                            </div>
-
-                            <!-- Batch Latency CARD -->
-                            <div class="card metric-card">
-                                <div class="metric-header">
-                                    <span class="metric-title">Last Batch Latency</span>
-                                                                    </div>
-                                <div class="metric-value" id="val-latency">0.00 ms</div>
-                                <div class="metric-subtext" id="val-avg-latency">Avg: 0.00 ms</div>
-                            </div>
                         </div>
+                        <div id="scheduled-widgets-grid">
+                            <!-- Live widgets appended here -->
+                        </div>
+                    </div>
 
                         <!-- System Resource History Chart -->
                         <div class="chart-section card">
@@ -199,10 +147,22 @@
                                 <canvas id="resource-chart"></canvas>
                             </div>
                         </div>
-                    </div>
+                    <details class="infrastructure-details"><summary>Memory details</summary><div class="metrics-grid secondary-metrics"><div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">PyArrow Allocated Memory</span>
+                                                                    </div>
+                                <div class="metric-value" id="val-pyarrow">0.00 MB</div>
+                                <div class="metric-subtext" id="val-pyarrow-peak">Peak: 0.00 MB</div>
+                            </div><div class="card metric-card">
+                                <div class="metric-header">
+                                    <span class="metric-title">DuckDB In-Memory Storage</span>
+                                                                    </div>
+                                <div class="metric-value" id="val-duckdb-live">Live: 0.00 MB</div>
+                                <div class="metric-subtext" id="val-duckdb-metrics">Metrics: 0.00 MB</div>
+                            </div></div></details></div>
 
                 </div>
-                
+
                 <!-- VIEW 4: CUSTOM QUERIES -->
                 <div id="view-queries" class="view-panel hidden">
                     <div class="card query-builder-card">
@@ -210,52 +170,52 @@
                             <h2>Custom SQL Query Runner</h2>
                             <span class="section-tag">DuckDB Metrics Database</span>
                         </div>
-                        <p class="settings-description">Write and execute DuckDB SQL queries against the <code>rill_metrics</code> table or engine metadata. Allowed prefixes: SELECT, WITH, EXPLAIN, PRAGMA show_tables, DESCRIBE.</p>
-                        
-                        <div class="saved-queries-toolbar" style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
+                        <p class="settings-description">Explore metrics and scheduled output tables with a read-only SQL query.</p>
+
+                        <details class="query-options"><summary>Saved queries</summary><div class="saved-queries-toolbar">
                             <label style="font-size: 12px; font-weight: 600;">Saved Queries:</label>
-                            <select id="saved-queries-select" class="select-control" style="flex: 1; padding: 6px;">
+                            <select id="saved-queries-select" class="select-control" style="flex: 1; padding: 6px;" aria-label="Saved queries">
                                 <option value="">-- Select a saved query --</option>
                             </select>
                             <button id="save-query-btn" class="btn btn-secondary" style="padding: 6px 12px;">Save Current</button>
                             <button id="delete-query-btn" class="btn btn-secondary" style="padding: 6px 12px;">Delete</button>
-                        </div>
+                        </div></details>
 
                         <div class="query-editor-container">
-                            <textarea id="sql-query-editor" class="text-input full-width" rows="6" placeholder="SELECT * FROM rill_metrics ORDER BY ts DESC LIMIT 10;"></textarea>
+                            <textarea id="sql-query-editor" class="text-input full-width" rows="6" placeholder="SELECT * FROM rill_metrics ORDER BY ts DESC LIMIT 10;" aria-label="SQL query"></textarea>
                         </div>
-                        
+
                         <div class="query-actions" style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
                             <button id="run-query-btn" class="btn btn-primary">▶ Run Query</button>
                             <button id="show-tables-btn" class="btn btn-secondary">Show Tables</button>
-                            
+
                             <div style="display: flex; gap: 5px; align-items: center; border-left: 1px solid var(--border); padding-left: 15px;">
                                 <label for="query-limit" style="font-size: 12px;">Limit:</label>
                                 <select id="query-limit" class="select-control" style="padding: 6px;">
                                     <option value="10">10</option>
-                                    <option value="20" selected>20</option>
+                                    <option value="20" selected="">20</option>
                                     <option value="50">50</option>
                                     <option value="100">100</option>
                                     <option value="all">All</option>
                                 </select>
                             </div>
-                            
-                            <div class="schedule-group" style="display: flex; gap: 10px; align-items: center; border-left: 1px solid var(--border); padding-left: 15px;">
+
+
+                        </div><details class="query-options"><summary>Schedule this query</summary><div class="schedule-group">
                                 <label for="query-name" style="font-size: 12px;">Name:</label>
                                 <input type="text" id="query-name" placeholder="Optional name" class="text-input" style="width: 120px; padding: 6px;">
                                 <label for="schedule-interval" style="font-size: 12px;">Interval (s):</label>
                                 <input type="number" id="schedule-interval" min="1" value="5" class="number-input" style="width: 60px;">
                                 <button id="schedule-query-btn" class="btn btn-secondary">Schedule Query</button>
-                            </div>
-                        </div>
-                        <div id="query-error-msg" class="error-msg" style="margin-top: 10px; display: none;"></div>
+                            </div></details>
+                        <div id="query-error-msg" class="error-msg" style="margin-top: 10px; display: none;" role="alert"></div>
 
-                        <div class="column-mapping-panel" id="column-mapping-panel" style="display: none; margin-top: 15px; padding: 15px; background: var(--bg-alt); border: 1px solid var(--border); border-radius: var(--radius-md);">
-                            <h3 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600; color: var(--text);">Chart Mapping</h3>
+                        <details class="column-mapping-panel query-options" id="column-mapping-panel" style="display: none;"><summary>Visualize results</summary>
+
                             <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
                                 <div class="input-group" style="margin: 0; min-width: 150px;">
                                     <label style="font-size: 11px;">Chart Type</label>
-                                    <select id="query-chart-type" class="select-control full-width" style="padding: 6px;">
+                                    <select id="query-chart-type" class="select-control full-width" style="padding: 6px;" aria-label="Chart type">
                                         <option value="none">Data Table Only</option>
                                         <option value="line">Line Chart</option>
                                         <option value="bar">Bar Chart</option>
@@ -264,15 +224,15 @@
                                 </div>
                                 <div class="input-group" style="margin: 0; min-width: 150px;">
                                     <label style="font-size: 11px;">X-Axis Column</label>
-                                    <select id="query-x-col" class="select-control full-width" style="padding: 6px;"></select>
+                                    <select id="query-x-col" class="select-control full-width" style="padding: 6px;" aria-label="X column"></select>
                                 </div>
                                 <div class="input-group" style="margin: 0; min-width: 150px;">
                                     <label style="font-size: 11px;">Y-Axis Column(s)</label>
-                                    <select id="query-y-col" class="select-control full-width" style="padding: 6px;"></select>
+                                    <select id="query-y-col" class="select-control full-width" style="padding: 6px;" aria-label="Y column"></select>
                                 </div>
                                 <div class="input-group" style="margin: 0; min-width: 150px;">
                                     <label style="font-size: 11px;">Color / Group By (Optional)</label>
-                                    <select id="query-color-col" class="select-control full-width" style="padding: 6px;">
+                                    <select id="query-color-col" class="select-control full-width" style="padding: 6px;" aria-label="Group by">
                                         <option value="">None</option>
                                     </select>
                                 </div>
@@ -280,9 +240,9 @@
                                     <button id="query-render-chart-btn" class="btn btn-secondary" style="padding: 6px 12px;">Render Chart</button>
                                 </div>
                             </div>
-                        </div>
+                        </details>
                     </div>
-                    
+
                     <div class="card query-chart-card" id="query-chart-card" style="display: none;">
                         <div class="section-title-bar">
                             <h2>Query Visualization</h2>
@@ -292,7 +252,7 @@
                             <canvas id="custom-query-chart"></canvas>
                         </div>
                     </div>
-                    
+
                     <div class="card query-results-card">
                         <div class="section-title-bar">
                             <h2>Query Results</h2>
@@ -309,7 +269,7 @@
                             </table>
                         </div>
                     </div>
-                    
+
                     <div class="card scheduled-queries-card">
                         <div class="section-title-bar">
                             <h2>Scheduled Queries</h2>
@@ -343,18 +303,18 @@
                             <div class="settings-card-header">
                                 <h2>Sound Alert Configuration</h2>
                                 <label class="toggle-switch-wrapper">
-                                    <input type="checkbox" id="alert-sound-enable-toggle" checked>
+                                    <input type="checkbox" id="alert-sound-enable-toggle" checked="">
                                     <span class="toggle-slider"></span>
                                     <span class="toggle-label">Sound Enabled</span>
                                 </label>
                             </div>
                             <p class="settings-description">Configure the acoustic alarm generated using the browser's Web Audio API whenever a trigger condition is met.</p>
-                            
+
                             <div class="settings-form-row">
                                 <div class="input-group">
                                     <label for="alert-duration-input">Sound Duration (Seconds)</label>
                                     <div class="slider-input-wrapper">
-                                        <input type="range" id="alert-duration-slider" min="1" max="30" value="3" class="range-slider">
+                                        <input type="range" id="alert-duration-slider" min="1" max="60" value="3" class="range-slider">
                                         <input type="number" id="alert-duration-input" min="1" max="60" value="3" class="number-input">
                                         <span class="unit-text">sec</span>
                                     </div>
@@ -385,7 +345,7 @@
                                 </label>
                             </div>
                             <p class="settings-description">Send real-time alerts to Slack, Google Meet/Chat, or custom POST endpoints via the CORS relay proxy when triggers fire.</p>
-                            
+
                             <div class="settings-form-row">
                                 <div class="input-group full-width">
                                     <label for="webhook-url-input">Webhook Endpoint URL</label>
@@ -422,7 +382,7 @@
                             <div class="rule-form-grid">
                                 <div class="input-group">
                                     <label for="rule-metric-select">Metric / Field</label>
-                                    <select id="rule-metric-select" class="select-control full-width" required>
+                                    <select id="rule-metric-select" class="select-control full-width" required="">
                                         <optgroup label="System Metrics">
                                             <option value="cpu">CPU Utilization (%)</option>
                                             <option value="memPct">System Memory Used (%)</option>
@@ -436,21 +396,21 @@
                                 </div>
                                 <div class="input-group">
                                     <label for="rule-operator-select">Condition</label>
-                                    <select id="rule-operator-select" class="select-control full-width" required>
-                                        <option value=">">Greater than (>)</option>
-                                        <option value=">=">Greater than or equal (>=)</option>
-                                        <option value="<">Less than (<)</option>
-                                        <option value="<=">Less than or equal (<=)</option>
+                                    <select id="rule-operator-select" class="select-control full-width" required="">
+                                        <option value=">">Greater than (&gt;)</option>
+                                        <option value=">=">Greater than or equal (&gt;=)</option>
+                                        <option value="<">Less than (&lt;)</option>
+                                        <option value="<=">Less than or equal (&lt;=)</option>
                                         <option value="==">Equals (==)</option>
                                     </select>
                                 </div>
                                 <div class="input-group">
                                     <label for="rule-threshold-input">Threshold Value</label>
-                                    <input type="number" id="rule-threshold-input" step="any" placeholder="e.g. 85" required class="text-input">
+                                    <input type="number" id="rule-threshold-input" step="any" placeholder="e.g. 85" required="" class="text-input">
                                 </div>
                                 <div class="input-group">
                                     <label for="rule-cooldown-input">Cooldown (Seconds)</label>
-                                    <input type="number" id="rule-cooldown-input" min="0" value="10" title="Minimum wait time before triggering this rule again" required class="text-input">
+                                    <input type="number" id="rule-cooldown-input" min="0" value="10" title="Minimum wait time before triggering this rule again" required="" class="text-input">
                                 </div>
                                 <div class="input-group form-submit-col">
                                     <label>&nbsp;</label>
@@ -485,7 +445,7 @@
                     <div class="card logs-card">
                         <div class="history-header">
                             <div>
-                                <h2>Alert History & Logs</h2>
+                                <h2>Alert History &amp; Logs</h2>
                                 <p class="settings-description">Chronological log of all alerts — threshold rule triggers, engine exceptions, and user-pushed alerts from application code.</p>
                             </div>
                             <div class="history-controls">
@@ -528,6 +488,7 @@
             </div>
         </main>
     </div>
-    <script src="app.js"></script>
-</body>
-</html>
+    <script src="state.js"></script><script src="app.js"></script>
+
+
+</body></html>

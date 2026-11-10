@@ -132,12 +132,10 @@ def test_metrics_con_closed_on_stop():
     
     # After stop, the connection should be closed
     # Trying to use it should raise an error
-    try:
+    import pytest
+    import duckdb
+    with pytest.raises(duckdb.Error):
         engine.metrics_con.execute("SELECT 1")
-        # If it doesn't raise, the connection might still be valid 
-        # but we verify stop() was called
-    except Exception:
-        pass  # Expected - connection is closed
 
 
 def test_engine_step_with_failing_connector():

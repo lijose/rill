@@ -52,6 +52,8 @@ Browser security policies (CORS) block frontend web applications from sending di
 
 ## Running the Dashboard
 
+See [current access controls, UI behavior, and migration notes](../docs/review-changes.md).
+
 ### Prerequisites
 - Node.js (`v18+` recommended)
 - `npm`
@@ -63,7 +65,7 @@ Browser security policies (CORS) block frontend web applications from sending di
    ```
 2. Install dependencies:
    ```bash
-   npm install
+   npm ci --ignore-scripts
    ```
 3. Start the Node.js WebSocket Bridge & Express Server:
    ```bash

@@ -341,7 +341,13 @@ class MetricsRegistry:
             "records_per_second": [float(all_metrics.get("records_per_second", 0.0))],
         })
 
-    def write_to_duckdb(self, con: 'duckdb.DuckDBPyConnection', engine: 'RillEngine') -> None:
+    def write_to_duckdb(self, con, engine) -> None:
+        # One lock covers a complete transaction and the acknowledgement of its
+        # alert batch. Producers can still append alerts under the registry lock.
+        with engine._lock:
+            self._write_to_duckdb(con, engine)
+
+    def _write_to_duckdb(self, con: 'duckdb.DuckDBPyConnection', engine: 'RillEngine') -> None:
         """
         Writes current system and business metrics to the given DuckDB connection using a tall schema.
         Also flushes buffered alerts to rill_alerts and performs scheduled retention.
@@ -356,15 +362,15 @@ class MetricsRegistry:
 
         all_metrics = self.get_all_metrics(engine)
 
-        duckdb_live_bytes = 0
+        duckdb_live_bytes = None
         try:
-            duckdb_live_bytes = engine.duckdb.con.execute("SELECT SUM(memory_usage) FROM pragma_database_size()").fetchone()[0] or 0
+            duckdb_live_bytes = engine.duckdb.con.execute("SELECT COALESCE(SUM(memory_usage_bytes), 0) FROM duckdb_memory()").fetchall()[0][0] or 0
         except Exception:
             pass
 
-        duckdb_metrics_bytes = 0
+        duckdb_metrics_bytes = None
         try:
-            duckdb_metrics_bytes = con.execute("SELECT SUM(memory_usage) FROM pragma_database_size()").fetchone()[0] or 0
+            duckdb_metrics_bytes = con.execute("SELECT COALESCE(SUM(memory_usage_bytes), 0) FROM duckdb_memory()").fetchall()[0][0] or 0
         except Exception:
             pass
 
@@ -378,8 +384,8 @@ class MetricsRegistry:
             (ts, "used_memory", float(used_mem)),
             (ts, "pyarrow_allocated_bytes", float(pyarrow_allocated)),
             (ts, "pyarrow_max_memory", float(pyarrow_max)),
-            (ts, "duckdb_live_bytes", float(duckdb_live_bytes)),
-            (ts, "duckdb_metrics_bytes", float(duckdb_metrics_bytes)),
+            (ts, "duckdb_live_bytes", float(duckdb_live_bytes) if duckdb_live_bytes is not None else None),
+            (ts, "duckdb_metrics_bytes", float(duckdb_metrics_bytes) if duckdb_metrics_bytes is not None else None),
             (ts, "last_batch_records", float(all_metrics.get("last_batch_records", 0))),
             (ts, "total_records_processed", float(all_metrics.get("total_records_processed", 0))),
             (ts, "last_batch_latency_ms", float(all_metrics.get("last_batch_latency_ms", 0.0))),
@@ -425,27 +431,40 @@ class MetricsRegistry:
                         con.execute(f'INSERT INTO "{t_name}" VALUES (?, ?)', [ts, float(lat)])
                         con.execute(f'DELETE FROM "{t_name}" WHERE ts < ?', [cutoff])
 
+            history_cutoff = datetime.datetime.fromtimestamp(
+                ts_float - engine.query_history_ttl_seconds
+            ).isoformat()
+            for table_name in engine._history_tables:
+                quoted = '"' + table_name.replace('"', '""') + '"'
+                con.execute(f'DELETE FROM {quoted} WHERE insert_ts < ?', [history_cutoff])
             con.commit()
         except Exception:
-            con.execute("ROLLBACK")
+            try:
+                con.rollback()
+            except Exception:
+                logger.debug("Rollback unavailable", exc_info=True)
             logger.exception("Failed to write metrics to DuckDB")
 
-        # Flush buffered alerts to rill_alerts table
+        # Keep the pending batch until its transaction has committed. Newly
+        # produced alerts append after this prefix and are left for the next tick.
         with self._lock:
             alerts_to_flush = list(self._alert_buffer)
-            self._alert_buffer.clear()
-
-        if alerts_to_flush:
+        try:
+            con.execute("BEGIN TRANSACTION")
+            if alerts_to_flush:
+                con.executemany("INSERT INTO rill_alerts VALUES (?, ?, ?, ?, ?)",
+                                [a.as_tuple() for a in alerts_to_flush])
+            alert_cutoff = datetime.datetime.fromtimestamp(
+                ts_float - engine.alert_ttl_seconds
+            ).isoformat()
+            con.execute("DELETE FROM rill_alerts WHERE ts < ?", [alert_cutoff])
+            con.commit()
+        except Exception:
             try:
-                con.execute("BEGIN TRANSACTION")
-                alert_rows = [a.as_tuple() for a in alerts_to_flush]
-                con.executemany(
-                    "INSERT INTO rill_alerts VALUES (?, ?, ?, ?, ?)",
-                    alert_rows
-                )
-                # Alert retention
-                con.execute("DELETE FROM rill_alerts WHERE ts < ?", [cutoff])
-                con.commit()
+                con.rollback()
             except Exception:
-                con.execute("ROLLBACK")
-                logger.exception("Failed to write alerts to DuckDB")
+                logger.debug("Alert rollback unavailable", exc_info=True)
+            logger.exception("Failed to write alerts to DuckDB; retaining pending batch")
+        else:
+            with self._lock:
+                del self._alert_buffer[:len(alerts_to_flush)]

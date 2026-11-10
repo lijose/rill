@@ -30,9 +30,9 @@ def test_memory_connector_backpressure_error():
 
 
 def test_json_stream_connector_max_buffer_bytes():
-    connector = JSONStreamConnector("target", max_buffer_bytes=25, on_overflow="drop_oldest")
+    connector = JSONStreamConnector("target", max_buffer_bytes=32, on_overflow="drop_oldest")
     
-    # Push two JSON lines exceeding 25 bytes
+    # Push two JSON lines together exceeding 32 bytes
     connector.push_bytes('{"id": 1, "name": "first"}\n')
     connector.push_bytes('{"id": 2, "name": "second"}\n')
 

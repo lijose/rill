@@ -1,105 +1,77 @@
-"""
-JSON Byte Stream Connector for Rill Streaming Engine.
-Captures high-frequency raw bytes and parses them directly into PyArrow tables using C++
-vectorized readers (`pyarrow.json.read_json`), entirely bypassing Python dictionary overhead.
-"""
-
+"""Bounded NDJSON ingestion with record-preserving overflow handling."""
 import io
 import threading
-from typing import Optional, Union, List
+from collections import deque
+from typing import Optional, Union
 import pyarrow as pa
 import pyarrow.json as pajson
 from .base import BaseConnector
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class JSONStreamConnector(BaseConnector):
-    """
-    Ingests raw byte chunks containing newline-delimited JSON (NDJSON) or JSON arrays.
-    Parses them directly into PyArrow Tables using C++ memory (`pyarrow.json.read_json`).
-    """
+    """Accept chunks containing complete NDJSON records (not partial records).
 
-    def __init__(
-        self,
-        target_table: str,
-        parse_options: Optional[pajson.ParseOptions] = None,
-        read_options: Optional[pajson.ReadOptions] = None,
-        max_buffer_records: Optional[int] = None,
-        max_buffer_bytes: Optional[int] = None,
-        on_overflow: str = "drop_oldest"
-    ):
-        super().__init__(target_table, max_buffer_records=max_buffer_records, on_overflow=on_overflow)
+    Limits include the newline delimiter. Drop policies discard whole records;
+    an individually oversized record is dropped, or raises in error mode.
+    Error-mode pushes are atomic. Parsing remains in PyArrow's C++ reader.
+    """
+    def __init__(self, target_table: str,
+                 parse_options: Optional[pajson.ParseOptions] = None,
+                 read_options: Optional[pajson.ReadOptions] = None,
+                 max_buffer_records: Optional[int] = None,
+                 max_buffer_bytes: Optional[int] = None,
+                 on_overflow: str = "drop_oldest"):
+        super().__init__(target_table, max_buffer_records, on_overflow)
+        if max_buffer_bytes is not None and (not isinstance(max_buffer_bytes, int) or isinstance(max_buffer_bytes, bool) or max_buffer_bytes <= 0):
+            raise ValueError("max_buffer_bytes must be a positive integer")
         self.parse_options = parse_options or pajson.ParseOptions()
         self.read_options = read_options or pajson.ReadOptions()
         self.max_buffer_bytes = max_buffer_bytes
-        self._buffer = io.BytesIO()
+        self._records = deque()
+        self._total_bytes = 0
         self._lock = threading.RLock()
         self._has_data = False
         self._last_byte_was_newline = False
 
     def push_bytes(self, raw_bytes: Union[bytes, bytearray, str]) -> None:
-        """
-        Appends raw high-frequency byte chunks to the internal byte buffer.
-
-        Args:
-            raw_bytes: Raw byte string (or string encoded as UTF-8) representing JSON lines or arrays.
-        """
         if isinstance(raw_bytes, str):
             raw_bytes = raw_bytes.encode('utf-8')
-
         if not raw_bytes:
             return
-
+        records = [bytes(line) + b'\n' for line in raw_bytes.splitlines() if line.strip()]
         with self._lock:
-            # Enforce max_buffer_bytes backpressure before appending
-            if self.max_buffer_bytes is not None and self.max_buffer_bytes > 0:
-                current_size = self._buffer.tell()
-                if current_size + len(raw_bytes) > self.max_buffer_bytes:
-                    if self.on_overflow == "error":
-                        raise BufferError(f"JSONStreamConnector buffer for '{self.target_table}' exceeded max_buffer_bytes ({self.max_buffer_bytes})")
-                    elif self.on_overflow == "drop_newest":
-                        return  # Shed new chunk
-                    else:  # drop_oldest
-                        # Clear old buffer bytes and keep new chunk if fitting
-                        self._buffer = io.BytesIO()
-                        self._has_data = False
-                        self._last_byte_was_newline = False
-
-            # Ensure newline between appended chunks if NDJSON
-            if self._has_data and not self._last_byte_was_newline and not raw_bytes.startswith(b'\n'):
-                self._buffer.write(b'\n')
-            self._buffer.write(raw_bytes)
+            if self.on_overflow == 'error':
+                if ((self.max_buffer_records is not None and len(self._records) + len(records) > self.max_buffer_records)
+                    or (self.max_buffer_bytes is not None and self._total_bytes + sum(map(len, records)) > self.max_buffer_bytes)):
+                    raise BufferError(f"JSONStreamConnector buffer for {self.target_table!r} exceeded its limit")
+            for record in records:
+                size = len(record)
+                if self.max_buffer_bytes is not None and size > self.max_buffer_bytes:
+                    continue
+                def exceeds():
+                    return ((self.max_buffer_records is not None and len(self._records) + 1 > self.max_buffer_records)
+                            or (self.max_buffer_bytes is not None and self._total_bytes + size > self.max_buffer_bytes))
+                if self.on_overflow == 'drop_newest' and exceeds():
+                    continue
+                while self._records and exceeds():
+                    self._total_bytes -= len(self._records.popleft())
+                self._records.append(record)
+                self._total_bytes += size
+            self._has_data = bool(self._records)
             self._last_byte_was_newline = raw_bytes.endswith(b'\n')
-            self._has_data = True
 
     def read_batch(self) -> Optional[pa.Table]:
-        """
-        Reads the buffered bytes and invokes `pyarrow.json.read_json` in C++ memory.
-        Returns `pa.Table` or None if buffer is empty.
-        """
         with self._lock:
-            if not self._has_data:
+            if not self._records:
                 return None
-
-            raw_data = self._buffer.getvalue()
-            # Reset buffer
-            self._buffer = io.BytesIO()
+            try:
+                table = pajson.read_json(io.BytesIO(b''.join(self._records)),
+                                         parse_options=self.parse_options,
+                                         read_options=self.read_options)
+            except pa.ArrowException as exc:
+                raise RuntimeError(f"JSONStreamConnector failed to parse NDJSON: {exc}") from exc
+            self._records.clear()
+            self._total_bytes = 0
             self._has_data = False
-
-        if not raw_data.strip():
-            return None
-
-        # Parse directly in C++ via pyarrow.json.read_json
-        stream = io.BytesIO(raw_data)
-        try:
-            table = pajson.read_json(
-                stream,
-                parse_options=self.parse_options,
-                read_options=self.read_options
-            )
+            self._last_byte_was_newline = False
             return table
-        except (pa.ArrowInvalid, pa.ArrowException) as e:
-            # If parsing fails on malformed bytes, raise or log
-            raise RuntimeError(f"JSONStreamConnector failed to parse bytes directly to PyArrow Table: {e}") from e

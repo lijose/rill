@@ -132,6 +132,12 @@ def estimate_datatype_size(t: pa.DataType, avg_string_length: int = 32, avg_list
     except (ValueError, TypeError, AttributeError):
         pass
 
+    # Older supported Arrow releases expose bit_width for fixed-width types.
+    try:
+        return t.bit_width / 8.0
+    except (ValueError, TypeError, AttributeError):
+        pass
+
     # 2. Check for boolean (stored as 1 bit per row = 0.125 bytes)
     if pa.types.is_boolean(t):
         return 0.125

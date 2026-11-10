@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rills"
-version = "0.1.1"
+version = "0.1.2"
 description = "A lightweight, single-node micro-batching engine designed for high-performance streaming analytics using pure PyArrow and DuckDB."
 readme = "README.md"
 authors = [
@@ -16,7 +16,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -25,10 +24,10 @@ classifiers = [
 ]
 keywords = ["streaming", "pyarrow", "duckdb", "micro-batching", "analytics"]
 
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "pyarrow>=14.0.0",
-    "duckdb>=0.9.0",
+    "pyarrow>=14.0.0,<27",
+    "duckdb>=1.5.4,<2.1",
     "psutil>=5.9.0"
 ]
 
@@ -54,3 +53,8 @@ rills = ["py.typed"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["rills*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires the Quack extension and a local TCP listener"]
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]

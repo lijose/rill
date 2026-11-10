@@ -1,3 +1,8 @@
+function readStored(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+    catch { return fallback; }
+}
+const { escapeHtml, ensureConnection, receiveResult, reconnectMessages } = RillState;
 // Application State
 let ws = null;
 let activeConnections = []; // Array of { id, address, token, status: 'connecting'|'connected'|'error'|'disconnected', lastError: null, metricsHistory: [], lastMetrics }
@@ -8,7 +13,7 @@ let resourceChart = null;
 let currentView = 'metrics'; // 'metrics' | 'alert-settings' | 'alert-logs'
 
 // Alert Settings & Rules State (Persisted via localStorage)
-let alertSettings = JSON.parse(localStorage.getItem('rill_alert_settings') || 'null') || {
+let alertSettings = readStored('rill_alert_settings', null) || {
     soundEnabled: true,
     soundDuration: 3,
     soundTone: 'beep',
@@ -17,12 +22,12 @@ let alertSettings = JSON.parse(localStorage.getItem('rill_alert_settings') || 'n
     webhookFormat: 'slack'
 };
 
-let alertRules = JSON.parse(localStorage.getItem('rill_alert_rules') || 'null') || [
+let alertRules = readStored('rill_alert_rules', null) || [
     { id: 'default-cpu', enabled: true, metricField: 'cpu', operator: '>', threshold: 85, cooldownSeconds: 15, lastTriggered: 0 },
     { id: 'default-mem', enabled: true, metricField: 'memPct', operator: '>', threshold: 90, cooldownSeconds: 15, lastTriggered: 0 }
 ];
 
-let alertLogs = JSON.parse(localStorage.getItem('rill_alert_logs') || '[]');
+let alertLogs = readStored('rill_alert_logs', []);
 let alertLogFilter = 'all'; // 'all' | 'error' | 'warning' | 'user' | 'engine' | 'rule'
 let audioCtx = null;
 let knownBusinessKeys = new Set();
@@ -124,12 +129,32 @@ const alertLogsTbody = document.getElementById('alert-logs-tbody');
 const clearAlertLogsBtn = document.getElementById('clear-alert-logs-btn');
 
 // Initialize WebSocket to Node.js Quack Bridge
-function initWebSocket() {
+let openingSocket = false;
+async function initWebSocket() {
+    if (openingSocket) return;
+    if (ws && [WebSocket.OPEN, WebSocket.CONNECTING].includes(ws.readyState)) return;
+    openingSocket = true;
+    try {
+        const session = await fetch('/api/session').then(response => response.json());
+        document.getElementById('dashboard-auth-panel').classList.toggle('hidden', session.authenticated);
+        connectionPanel.classList.toggle('hidden', !session.authenticated || activeConnectionId !== null);
+        if (!session.authenticated) { openingSocket = false; return; }
+    } catch (error) {
+        openingSocket = false;
+        connectError.textContent = 'Dashboard bridge unavailable. Retrying…';
+        setTimeout(initWebSocket, 3000);
+        return;
+    }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${window.location.host}`);
+    openingSocket = false;
 
     ws.onopen = () => {
-        console.log("Connected to Node.js WebSocket Quack Bridge.");
+        for (const connection of activeConnections) {
+            connection.status = 'connecting';
+            ws.send(JSON.stringify({action:'connect', tabId:connection.id, address:connection.address, token:connection.token}));
+        }
+        renderTabs();
     };
 
     ws.onmessage = (event) => {
@@ -144,8 +169,10 @@ function initWebSocket() {
                 if (activeConnectionId !== tabId) return;
                 renderQueryResults(payload);
             } else if (payload.type === 'scheduled_result') {
-                if (activeConnectionId !== tabId) return;
-                updateScheduledQueryResult(payload);
+                const metrics = receiveResult(connObj, payload);
+                updateBusinessMetricsDropdown(metrics);
+                if (connObj.lastMetrics) evaluateAlerts(connObj.lastMetrics, connObj);
+                if (activeConnectionId === tabId) updateScheduledQueryResult(payload);
             } else if (payload.error) {
                 console.error(`Error for tab ${tabId}:`, payload.error);
                 showToast('Quack Worker Error', payload.error, '', 'error');
@@ -166,7 +193,7 @@ function initWebSocket() {
                     showToast('Reconnecting...', `Attempting to reconnect ${connObj.address} in 3s...`, '', 'info');
                     setTimeout(() => {
                         const currentConn = activeConnections.find(c => c.id === tabId);
-                        if (currentConn && (currentConn.status === 'error' || currentConn.status === 'disconnected')) {
+                        if (ws?.readyState === WebSocket.OPEN && currentConn && (currentConn.status === 'error' || currentConn.status === 'disconnected')) {
                             currentConn.status = 'connecting';
                             currentConn.lastError = null;
                             if (activeConnectionId === tabId) renderTabs();
@@ -185,7 +212,8 @@ function initWebSocket() {
                 connObj.lastError = null;
                 connectBtn.disabled = false;
                 connectBtn.innerText = 'Connect Console';
-                selectTab(connObj.id);
+                reconnectMessages(connObj).forEach(message => ws.send(JSON.stringify(message)));
+                if (activeConnectionId === null || activeConnectionId === connObj.id) selectTab(connObj.id);
             } else if (payload.type === 'metrics') {
                 if (connObj.status !== 'connected') {
                     connObj.status = 'connected';
@@ -229,9 +257,9 @@ function initWebSocket() {
                     latency: Number(data.last_batch_latency_ms || 0),
                     avgLatency: Number(data.avg_batch_latency_ms || 0),
                     rps: Number(data.records_per_second || 0),
-                    duckdbLive: Number(data.duckdb_live_bytes || 0),
-                    duckdbMetrics: Number(data.duckdb_metrics_bytes || 0),
-                    businessMetrics: businessMetrics
+                    duckdbLive: data.duckdb_live_bytes == null ? null : Number(data.duckdb_live_bytes),
+                    duckdbMetrics: data.duckdb_metrics_bytes == null ? null : Number(data.duckdb_metrics_bytes),
+                    businessMetrics: Object.assign(ensureConnection(connObj).businessMetrics, businessMetrics)
                 };
 
                 connObj.metricsHistory.push(latestRecord);
@@ -254,62 +282,14 @@ function initWebSocket() {
                 // Server-side engine/user alerts from rill_alerts table
                 handleEngineAlerts(payload.data, connObj);
             } else if (payload.type === 'scheduled_query_sync') {
+                ensureConnection(connObj);
                 const config = payload.config;
-                window.scheduledConfigs = window.scheduledConfigs || {};
-                
-                if (!window.scheduledConfigs[config.queryId]) {
-                    window.scheduledConfigs[config.queryId] = config;
-                    
-                    // Render in the UI table if active connection
-                    if (activeConnectionId === tabId) {
-                        const tr = document.createElement('tr');
-                        tr.id = `sched-row-${config.queryId}`;
-                        const customName = config.name || '-';
-                        const sql = config.sql || '';
-                        tr.innerHTML = `
-                            <td><strong>${customName}</strong></td>
-                            <td>${config.queryId.substring(0, 8)}...</td>
-                            <td title="${sql}">${sql.length > 30 ? sql.substring(0, 30) + '...' : sql}</td>
-                            <td>${config.intervalSeconds}s</td>
-                            <td class="last-run">Pending</td>
-                            <td class="last-result">Waiting...</td>
-                            <td style="text-align: right;">
-                                <button class="btn btn-secondary unschedule-btn" data-qid="${config.queryId}">Stop</button>
-                            </td>
-                        `;
-                        
-                        const emptyRow = scheduledQueriesTbody.querySelector('.empty-table-row');
-                        if (emptyRow) emptyRow.remove();
-                        
-                        scheduledQueriesTbody.appendChild(tr);
-                        
-                        tr.querySelector('.unschedule-btn').addEventListener('click', () => {
-                            ws.send(JSON.stringify({
-                                action: 'unschedule_query',
-                                tabId: activeConnectionId,
-                                queryId: config.queryId
-                            }));
-                            
-                            tr.remove();
-                            if (scheduledQueriesTbody.children.length === 0) {
-                                scheduledQueriesTbody.innerHTML = '<tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>';
-                            }
-                            
-                            delete window.scheduledConfigs[config.queryId];
-                            if (window.scheduledCharts && window.scheduledCharts[config.queryId]) {
-                                window.scheduledCharts[config.queryId].destroy();
-                                delete window.scheduledCharts[config.queryId];
-                            }
-                            const widget = document.getElementById(`widget-${config.queryId}`);
-                            if (widget) widget.remove();
-                            
-                            const grid = document.getElementById('scheduled-widgets-grid');
-                            if (grid && grid.children.length === 0) {
-                                document.getElementById('scheduled-widgets-container').style.display = 'none';
-                            }
-                        });
-                    }
+                if (connObj.stoppedQueries.has(config.queryId)) {
+                    ws.send(JSON.stringify({action:'unschedule_query',tabId:connObj.id,queryId:config.queryId}));
+                    return;
                 }
+                connObj.scheduledConfigs[config.queryId] = config;
+                if (activeConnectionId === tabId) renderScheduledQueries(connObj);
             }
         } catch (err) {
             console.error("Error processing WebSocket message:", err);
@@ -317,17 +297,18 @@ function initWebSocket() {
     };
 
     ws.onclose = () => {
-        console.warn("WebSocket disconnected. Reconnecting in 3 seconds...");
+        activeConnections.forEach(connection => { connection.status = 'disconnected'; connection.lastError = 'Dashboard bridge disconnected'; });
+        renderTabs();
+        if (activeConnectionId !== null) selectTab(activeConnectionId);
         setTimeout(initWebSocket, 3000);
     };
 }
 
-initWebSocket();
 
 // Initialize Chart.js
 function initChart() {
     Chart.defaults.color = '#9ca3af';
-    Chart.defaults.font.family = "'Outfit', sans-serif";
+    Chart.defaults.font.family = 'system-ui, sans-serif';
 
     // 1. System Resource Chart
     const ctxSys = document.getElementById('resource-chart').getContext('2d');
@@ -377,6 +358,7 @@ function initChart() {
 
 // Format Helpers
 function formatBytes(bytes, decimals = 2) {
+    if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return 'Unavailable';
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
     const dm = decimals < 0 ? 0 : decimals;
@@ -386,7 +368,7 @@ function formatBytes(bytes, decimals = 2) {
 }
 
 function formatTime(timestamp) {
-    const date = new Date(timestamp * 1000);
+    const date = new Date(typeof timestamp === 'string' && timestamp.includes('T') ? timestamp : timestamp * 1000);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
@@ -537,10 +519,10 @@ function selectTab(id) {
         dashboardContent.classList.remove('hidden');
         currentConnectedAddr.innerText = connObj.address;
         
-        const isOffline = connObj.status === 'error' || connObj.status === 'disconnected';
+        const isOffline = connObj.status !== 'connected';
         if (isOffline) {
             connectionStatusPill.classList.remove('connected');
-            connectionStatusPill.querySelector('.status-text').innerText = 'Offline / Error';
+            connectionStatusPill.querySelector('.status-text').innerText = connObj.status === 'connecting' ? 'Connecting…' : 'Offline / Error';
         } else {
             connectionStatusPill.classList.add('connected');
             connectionStatusPill.querySelector('.status-text').innerText = 'Connected';
@@ -566,8 +548,50 @@ function selectTab(id) {
             valAvgLatency.innerText = 'Avg: 0.00 ms';
         }
         
+        ensureConnection(connObj);
+        window.scheduledConfigs = connObj.scheduledConfigs;
+        renderScheduledQueries(connObj);
+        lastQueryResult = null;
+        queryResultsThead.replaceChildren();
+        queryResultsTbody.replaceChildren();
+        queryChartCard.style.display = 'none';
+        columnMappingPanel.style.display = 'none';
         updateChartUI();
     }
+}
+
+function renderScheduledQueries(connection) {
+    ensureConnection(connection);
+    window.scheduledConfigs = connection.scheduledConfigs;
+    for (const chart of Object.values(window.scheduledCharts || {})) chart.destroy();
+    window.scheduledCharts = Object.create(null);
+    document.getElementById('scheduled-widgets-grid').replaceChildren();
+    document.getElementById('scheduled-widgets-container').style.display = 'none';
+    scheduledQueriesTbody.replaceChildren();
+    for (const [queryId, config] of Object.entries(connection.scheduledConfigs)) {
+        const row = document.createElement('tr');
+        row.id = `sched-row-${queryId}`;
+        for (const value of [config.name || 'Untitled', queryId.slice(0,8), config.sql, `${config.intervalSeconds}s`, 'Pending', 'Waiting…']) {
+            const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
+        }
+        row.children[4].className = 'last-run'; row.children[5].className = 'last-result';
+        const actions = document.createElement('td');
+        const stop = document.createElement('button'); stop.className = 'btn btn-secondary'; stop.textContent = 'Stop';
+        stop.addEventListener('click', () => {
+            if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({action:'unschedule_query',tabId:connection.id,queryId}));
+            connection.stoppedQueries.add(queryId);
+            delete connection.scheduledConfigs[queryId]; delete connection.scheduledResults[queryId];
+            const prefix = `${config.name || queryId} - `;
+            Object.keys(connection.businessMetrics).filter(k => k.startsWith(prefix)).forEach(k => delete connection.businessMetrics[k]);
+            if (activeConnectionId === connection.id) renderScheduledQueries(connection);
+        });
+        actions.appendChild(stop); row.appendChild(actions); scheduledQueriesTbody.appendChild(row);
+    }
+    if (!scheduledQueriesTbody.children.length) {
+        const row = scheduledQueriesTbody.insertRow(); const cell = row.insertCell();
+        cell.colSpan = 7; cell.className = 'empty-table'; cell.textContent = 'No queries scheduled.';
+    }
+    for (const result of Object.values(connection.scheduledResults)) window.updateScheduledQueryResult?.(result);
 }
 
 // Detach and close a connection tab
@@ -626,7 +650,8 @@ connectForm.addEventListener('submit', (e) => {
         lastMetrics: null
     };
 
-    activeConnections.push(connectionObj);
+    activeConnections.push(ensureConnection(connectionObj));
+    activeConnectionId = connId;
     quackTokenInput.value = '';
 
     ws.send(JSON.stringify({
@@ -859,8 +884,8 @@ function showToast(title, subtitle, statusBadgesHtml = '', severity = '') {
     toast.innerHTML = `
         <div class="toast-icon">🚨</div>
         <div class="toast-content">
-            <div class="toast-title">${title}</div>
-            <div class="toast-subtitle">${subtitle}</div>
+            <div class="toast-title">${escapeHtml(title)}</div>
+            <div class="toast-subtitle">${escapeHtml(subtitle)}</div>
             ${statusBadgesHtml ? `<div style="margin-top:0.5rem; display:flex; gap:0.4rem; flex-wrap:wrap;">${statusBadgesHtml}</div>` : ''}
         </div>
         <button class="toast-close">&times;</button>
@@ -900,9 +925,9 @@ async function evaluateAlerts(latestRecord, connObj) {
 
         let observedValue = null;
         // Check if field is system property or inside businessMetrics
-        if (latestRecord.hasOwnProperty(rule.metricField)) {
+        if (Object.prototype.hasOwnProperty.call(latestRecord, rule.metricField)) {
             observedValue = latestRecord[rule.metricField];
-        } else if (latestRecord.businessMetrics && latestRecord.businessMetrics.hasOwnProperty(rule.metricField)) {
+        } else if (latestRecord.businessMetrics && Object.prototype.hasOwnProperty.call(latestRecord.businessMetrics, rule.metricField)) {
             observedValue = extractNumeric(latestRecord.businessMetrics[rule.metricField]);
         }
 
@@ -916,10 +941,11 @@ async function evaluateAlerts(latestRecord, connObj) {
         else if (rule.operator === '==') isTriggered = observedValue == rule.threshold;
 
         if (isTriggered) {
-            const cooldown = Number(rule.cooldownSeconds) || 10;
-            const lastTime = Number(rule.lastTriggered) || 0;
+            const cooldown = Math.max(0, Number(rule.cooldownSeconds) || 0);
+            const lastTime = ensureConnection(connObj).ruleTriggers[rule.id] || 0;
             
             if ((now - lastTime) >= cooldown) {
+                connObj.ruleTriggers[rule.id] = now;
                 rule.lastTriggered = now;
                 saveAlertRules();
 
@@ -971,7 +997,7 @@ async function evaluateAlerts(latestRecord, connObj) {
 
                 showToast(
                     `Alert Triggered: ${rule.metricField}`,
-                    `Observed value <strong>${formattedVal}</strong> met condition (${rule.operator} ${rule.threshold}) on ${connObj.address}`,
+                    `Observed value ${formattedVal} met condition (${rule.operator} ${rule.threshold}) on ${connObj.address}`,
                     `${soundBadge} ${webhookBadge}`
                 );
             }
@@ -1020,7 +1046,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     runQueryBtn.addEventListener('click', () => {
-        if (!activeConnectionId) return;
+        if (!activeConnectionId || ws?.readyState !== WebSocket.OPEN) return;
         let sql = sqlQueryEditor.value.trim();
         if (!sql) return;
         
@@ -1058,70 +1084,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const qid = generateQueryId();
         const customName = document.getElementById('query-name') ? document.getElementById('query-name').value.trim() : '';
         
-        window.scheduledConfigs = window.scheduledConfigs || {};
-        window.scheduledConfigs[qid] = {
-            name: customName,
-            sql: sql,
-            type: queryChartType.value,
-            xCol: queryXCol.value,
-            yCol: queryYCol.value,
-            colorCol: queryColorCol.value
+        const connection = ensureConnection(activeConnections.find(c => c.id === activeConnectionId));
+        connection.scheduledConfigs[qid] = {
+            queryId: qid, name: customName, sql, intervalSeconds: interval,
+            type: queryChartType.value, xCol: queryXCol.value,
+            yCol: queryYCol.value, colorCol: queryColorCol.value
         };
-        
-        ws.send(JSON.stringify({
-            action: 'schedule_query',
-            tabId: activeConnectionId,
-            queryId: qid,
-            sql: sql,
-            intervalSeconds: interval
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+            action: 'schedule_query', tabId: connection.id, queryId: qid,
+            sql, intervalSeconds: interval
         }));
-        
-        const tr = document.createElement('tr');
-        tr.id = `sched-row-${qid}`;
-        tr.innerHTML = `
-            <td><strong>${customName || '-'}</strong></td>
-            <td>${qid.substring(0, 8)}...</td>
-            <td title="${sql}">${sql.length > 30 ? sql.substring(0, 30) + '...' : sql}</td>
-            <td>${interval}s</td>
-            <td class="last-run">Pending</td>
-            <td class="last-result">Waiting...</td>
-            <td style="text-align: right;">
-                <button class="btn btn-secondary unschedule-btn" data-qid="${qid}">Stop</button>
-            </td>
-        `;
-        
-        const emptyRow = scheduledQueriesTbody.querySelector('.empty-table-row');
-        if (emptyRow) emptyRow.remove();
-        
-        scheduledQueriesTbody.appendChild(tr);
-        
-        tr.querySelector('.unschedule-btn').addEventListener('click', () => {
-            ws.send(JSON.stringify({
-                action: 'unschedule_query',
-                tabId: activeConnectionId,
-                queryId: qid
-            }));
-            
-            tr.remove();
-            if (scheduledQueriesTbody.children.length === 0) {
-                scheduledQueriesTbody.innerHTML = '<tr class="empty-table-row"><td colspan="6" class="empty-table">No queries scheduled.</td></tr>';
-            }
-            
-            if (window.scheduledConfigs && window.scheduledConfigs[qid]) delete window.scheduledConfigs[qid];
-            if (window.scheduledCharts && window.scheduledCharts[qid]) {
-                window.scheduledCharts[qid].destroy();
-                delete window.scheduledCharts[qid];
-            }
-            const widget = document.getElementById(`widget-${qid}`);
-            if (widget) widget.remove();
-            
-            const grid = document.getElementById('scheduled-widgets-grid');
-            if (grid && grid.children.length === 0) {
-                document.getElementById('scheduled-widgets-container').style.display = 'none';
-            }
+        renderScheduledQueries(connection);
     });
-    });
-    
+
     window.renderQueryResults = function(payload) {
         lastQueryResult = null;
         if (payload.error) {
@@ -1146,7 +1121,7 @@ document.addEventListener('DOMContentLoaded', () => {
         lastQueryResult = payload;
         
         let headerRow = '<tr>';
-        payload.columns.forEach(c => headerRow += `<th>${c}</th>`);
+        payload.columns.forEach(c => headerRow += `<th>${escapeHtml(c)}</th>`);
         headerRow += '</tr>';
         queryResultsThead.innerHTML = headerRow;
         
@@ -1160,7 +1135,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let bodyRows = '';
         payload.rows.forEach(r => {
             let rowHtml = '<tr>';
-            payload.columns.forEach(c => rowHtml += `<td>${r[c]}</td>`);
+            payload.columns.forEach(c => rowHtml += `<td>${escapeHtml(r[c])}</td>`);
             rowHtml += '</tr>';
             bodyRows += rowHtml;
         });
@@ -1170,7 +1145,7 @@ document.addEventListener('DOMContentLoaded', () => {
         columnMappingPanel.style.display = 'block';
         
         let opts = '';
-        payload.columns.forEach(c => opts += `<option value="${c}">${c}</option>`);
+        payload.columns.forEach(c => opts += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
         queryXCol.innerHTML = opts;
         queryYCol.innerHTML = opts;
         queryColorCol.innerHTML = '<option value="">None</option>' + opts;
@@ -1209,7 +1184,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ];
         
         if (colorCol) {
-            const groups = {};
+            const groups = Object.create(null);
             rows.forEach(r => {
                 const groupVal = r[colorCol];
                 if (!groups[groupVal]) groups[groupVal] = [];
@@ -1260,7 +1235,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 interaction: { mode: 'nearest', intersect: false },
                 plugins: {
                     legend: {
-                        labels: { color: 'var(--text-primary)' },
+                        labels: { color: '#ecf1f7' },
                         onClick: function(e, legendItem, legend) {
                             const index = legendItem.datasetIndex;
                             const ci = legend.chart;
@@ -1279,8 +1254,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 },
                 scales: {
-                    x: { type: xIsCategory ? 'category' : 'linear', ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } },
-                    y: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } }
+                    x: { type: xIsCategory ? 'category' : 'linear', ticks: { color: '#a4b1c2' }, grid: { color: '#283545' } },
+                    y: { ticks: { color: '#a4b1c2' }, grid: { color: '#283545' } }
                 }
             }
         });
@@ -1314,27 +1289,27 @@ document.addEventListener('DOMContentLoaded', () => {
             widget = document.createElement('div');
             widget.id = `widget-${payload.queryId}`;
             widget.className = 'card chart-card';
-            widget.style.cssText = 'display: flex; flex-direction: column; resize: both; overflow: hidden; width: 450px; height: 350px; min-width: 300px; min-height: 250px; background: var(--bg-card);';
+            widget.style.cssText = 'display:flex;flex-direction:column;min-width:0;min-height:280px;';
             
             if (config.type === 'none') {
                 widget.innerHTML = `
                     <div class="chart-header">
-                        <h2>📋 ${config.name ? config.name : `Scheduled Query: ${config.sql.substring(0, 30)}...`}</h2>
+                        <h2>📋 ${escapeHtml(config.name || `Query: ${config.sql.substring(0, 30)}…`)}</h2>
                     </div>
                     <div class="table-container" style="flex: 1; overflow-y: auto; height: 100%; min-height: 200px;">
                         <table class="history-table">
-                            <thead id="widget-thead-${payload.queryId}"></thead>
-                            <tbody id="widget-tbody-${payload.queryId}"></tbody>
+                            <thead id="widget-thead-${escapeHtml(payload.queryId)}"></thead>
+                            <tbody id="widget-tbody-${escapeHtml(payload.queryId)}"></tbody>
                         </table>
                     </div>
                 `;
             } else {
                 widget.innerHTML = `
                     <div class="chart-header">
-                        <h2>📈 ${config.name ? config.name : `Scheduled Query: ${config.sql.substring(0, 30)}...`}</h2>
+                        <h2>📈 ${escapeHtml(config.name || `Query: ${config.sql.substring(0, 30)}…`)}</h2>
                     </div>
                     <div class="chart-container" style="flex: 1; height: 100%; min-height: 200px; position: relative;">
-                        <canvas id="widget-canvas-${payload.queryId}"></canvas>
+                        <canvas id="widget-canvas-${escapeHtml(payload.queryId)}"></canvas>
                     </div>
                 `;
             }
@@ -1346,20 +1321,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const tbody = document.getElementById(`widget-tbody-${payload.queryId}`);
             
             let headerHtml = '<tr>';
-            payload.columns.forEach(c => headerHtml += `<th>${c}</th>`);
+            payload.columns.forEach(c => headerHtml += `<th>${escapeHtml(c)}</th>`);
             headerHtml += '</tr>';
             thead.innerHTML = headerHtml;
             
             let bodyHtml = '';
             payload.rows.forEach(r => {
                 let rowHtml = '<tr>';
-                payload.columns.forEach(c => rowHtml += `<td>${r[c]}</td>`);
+                payload.columns.forEach(c => rowHtml += `<td>${escapeHtml(r[c])}</td>`);
                 rowHtml += '</tr>';
                 bodyHtml += rowHtml;
             });
             tbody.innerHTML = bodyHtml;
         } else {
-            window.scheduledCharts = window.scheduledCharts || {};
+            window.scheduledCharts = window.scheduledCharts || Object.create(null);
             const canvas = document.getElementById(`widget-canvas-${payload.queryId}`);
             if (!canvas) return;
             
@@ -1370,7 +1345,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const { xCol, yCol, colorCol } = config;
             
             if (colorCol) {
-                const groups = {};
+                const groups = Object.create(null);
                 rows.forEach(r => {
                     const groupVal = r[colorCol];
                     if (!groups[groupVal]) groups[groupVal] = [];
@@ -1379,7 +1354,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 let colorIdx = 0;
                 for (const [gName, gRows] of Object.entries(groups)) {
-                    gRows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+                    gRows.sort((a,b) => sortRowsX(a,b,xCol));
                     datasets.push({
                         label: String(gName),
                         data: gRows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
@@ -1391,7 +1366,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     colorIdx++;
                 }
             } else {
-                rows.sort((a,b) => extractNumeric(a[xCol]) - extractNumeric(b[xCol]));
+                rows.sort((a,b) => sortRowsX(a,b,xCol));
                 datasets.push({
                     label: yCol,
                     data: rows.map(r => ({ x: r[xCol], y: extractNumeric(r[yCol]) })),
@@ -1417,35 +1392,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        plugins: { legend: { labels: { color: 'var(--text-primary)' } } },
+                        plugins: { legend: { labels: { color: '#ecf1f7' } } },
                         scales: {
-                            x: { type: xIsCategory ? 'category' : 'linear', ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } },
-                            y: { ticks: { color: 'var(--text-secondary)' }, grid: { color: 'var(--border-color)' } }
+                            x: { type: xIsCategory ? 'category' : 'linear', ticks: { color: '#a4b1c2' }, grid: { color: '#283545' } },
+                            y: { ticks: { color: '#a4b1c2' }, grid: { color: '#283545' } }
                         },
                         animation: false
                     }
                 });
             }
 
-            // Expose scheduled query numeric columns as business metrics for alerts
-            if (rows && rows.length > 0) {
-                const connObj = activeConnections.find(c => c.id === activeConnectionId);
-                if (connObj && connObj.lastMetrics && connObj.lastMetrics.businessMetrics) {
-                    const latestRow = rows[rows.length - 1]; // After sort, last row is usually latest in time
-                    const newMetrics = {};
-                    for (const [key, value] of Object.entries(latestRow)) {
-                        if (key !== 'ts' && key !== 'timestamp' && typeof value === 'number' && !isNaN(value)) {
-                            const metricName = `${config.name || payload.queryId} - ${key}`;
-                            connObj.lastMetrics.businessMetrics[metricName] = value;
-                            newMetrics[metricName] = value;
-                        }
-                    }
-                    if (Object.keys(newMetrics).length > 0) {
-                        updateBusinessMetricsDropdown(newMetrics);
-                        evaluateAlerts(connObj.lastMetrics, connObj);
-                    }
-                }
-            }
+
         }
     };
 });
@@ -1506,16 +1463,16 @@ function renderAlertRules() {
         tr.innerHTML = `
             <td>
                 <label class="toggle-switch-wrapper">
-                    <input type="checkbox" class="rule-toggle-checkbox" data-id="${rule.id}" ${rule.enabled ? 'checked' : ''}>
+                    <input type="checkbox" class="rule-toggle-checkbox" data-id="${escapeHtml(rule.id)}" ${rule.enabled ? 'checked' : ''}>
                     <span class="toggle-slider"></span>
                 </label>
             </td>
-            <td><strong style="color:var(--text-primary);">${rule.metricField}</strong></td>
-            <td><code style="background:rgba(255,255,255,0.05); padding:0.2rem 0.5rem; border-radius:4px; color:var(--accent-teal);">${rule.operator} ${rule.threshold}</code></td>
-            <td>${rule.cooldownSeconds}s</td>
-            <td style="color:var(--text-secondary);">${lastTimeStr}</td>
+            <td><strong style="color:var(--text-primary);">${escapeHtml(rule.metricField)}</strong></td>
+            <td><code style="background:rgba(255,255,255,0.05); padding:0.2rem 0.5rem; border-radius:4px; color:var(--accent-teal);">${escapeHtml(rule.operator)} ${escapeHtml(rule.threshold)}</code></td>
+            <td>${escapeHtml(rule.cooldownSeconds)}s</td>
+            <td style="color:var(--text-secondary);">${escapeHtml(lastTimeStr)}</td>
             <td style="text-align: right;">
-                <button class="btn btn-secondary rule-delete-btn" data-id="${rule.id}" style="padding:0.35rem 0.75rem; border-color:rgba(239,68,68,0.3); color:#f87171;">Delete</button>
+                <button class="btn btn-secondary rule-delete-btn" data-id="${escapeHtml(rule.id)}" style="padding:0.35rem 0.75rem; border-color:rgba(239,68,68,0.3); color:#f87171;">Delete</button>
             </td>
         `;
 
@@ -1539,7 +1496,7 @@ addRuleForm.addEventListener('submit', (e) => {
     const metricField = ruleMetricSelect.value;
     const operator = ruleOperatorSelect.value;
     const threshold = parseFloat(ruleThresholdInput.value);
-    const cooldownSeconds = parseInt(ruleCooldownInput.value, 10) || 10;
+    const cooldownSeconds = Math.max(0, Number(ruleCooldownInput.value) || 0);
 
     if (isNaN(threshold)) return;
 
@@ -1567,7 +1524,7 @@ function handleEngineAlerts(alertsData, connObj) {
     if (!alertsData || alertsData.length === 0) return;
 
     for (const alert of alertsData) {
-        const severity = alert.severity || 'info';
+        const severity = ['error','warning','info'].includes(alert.severity) ? alert.severity : 'info';
         const source = alert.source || 'engine';
         const sourceType = source === 'user' ? 'user' : (source.startsWith('engine.') || source.startsWith('compute.') || source.startsWith('metrics.') || source.startsWith('table.') ? 'engine' : 'engine');
 
@@ -1594,7 +1551,7 @@ function handleEngineAlerts(alertsData, connObj) {
             const severityIcon = severity === 'error' ? '🔴' : '🟡';
             showToast(
                 `${severityIcon} ${sourceLabel}: ${alert.message}`,
-                alert.detail ? `<code style="font-size:11px;color:var(--text-secondary)">${alert.detail.substring(0, 150)}</code>` : `Source: ${source}`,
+                alert.detail ? alert.detail.substring(0, 150) : `Source: ${source}`,
                 `<span class="badge-severity ${severity}">${severity}</span> <span class="badge-source ${sourceType}">${sourceLabel}</span>`,
                 severity
             );
@@ -1615,6 +1572,7 @@ function handleEngineAlerts(alertsData, connObj) {
 }
 
 function getSeverityBadgeHtml(severity) {
+    severity = ['error','warning','info'].includes(severity) ? severity : 'info';
     const icons = { error: '🔴', warning: '🟡', info: '🔵' };
     return `<span class="badge-severity ${severity || 'info'}">${icons[severity] || '🔵'} ${severity || 'info'}</span>`;
 }
@@ -1663,26 +1621,26 @@ function renderAlertLogs() {
         let valueDetail = '';
         if (log.isEngineAlert) {
             valueDetail = log.observedValue
-                ? `<span class="alert-detail-text" title="${log.observedValue.replace(/"/g, '&quot;')}">${log.observedValue}</span>`
+                ? `<span class="alert-detail-text" title="${escapeHtml(log.observedValue)}">${escapeHtml(log.observedValue)}</span>`
                 : '-';
         } else {
-            valueDetail = `<code style="color: #f87171; font-weight:700;">${log.observedValue}</code>`;
+            valueDetail = `<code style="color: #f87171; font-weight:700;">${escapeHtml(log.observedValue)}</code>`;
         }
 
         let statusCol = '';
         if (log.isEngineAlert) {
             statusCol = `<span class="badge-status" style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);font-size:11px;">Logged</span>`;
         } else {
-            statusCol = log.statusBadges || `<span class="badge-status played">🔊 ${log.soundStatus}</span>`;
+            statusCol = `<span class="badge-status">${escapeHtml(log.soundStatus)} · ${escapeHtml(log.webhookStatus)}</span>`;
         }
 
         tr.innerHTML = `
             <td style="white-space: nowrap; font-family: monospace;">${formatTime(log.timestamp)}</td>
             <td>${severityBadge}</td>
             <td>${sourceBadge}</td>
-            <td><strong>${log.ruleCondition}</strong></td>
+            <td><strong>${escapeHtml(log.ruleCondition)}</strong></td>
             <td>${valueDetail}</td>
-            <td style="color: var(--text-secondary);">${log.serverAddress}</td>
+            <td style="color: var(--text-secondary);">${escapeHtml(log.serverAddress)}</td>
             <td>${statusCol}</td>
         `;
         alertLogsTbody.appendChild(tr);
@@ -1707,18 +1665,45 @@ clearAlertLogsBtn.addEventListener('click', () => {
     renderAlertLogs();
 });
 
-// Theme / Background Color Picker Logic
-const bgColorPicker = document.getElementById('bg-color-picker');
-if (bgColorPicker) {
-    const savedBg = localStorage.getItem('rill_bg_color');
-    if (savedBg) {
-        document.documentElement.style.setProperty('--bg-primary', savedBg);
-        bgColorPicker.value = savedBg;
-    }
-    
-    bgColorPicker.addEventListener('input', (e) => {
-        const color = e.target.value;
-        document.documentElement.style.setProperty('--bg-primary', color);
-        localStorage.setItem('rill_bg_color', color);
-    });
+// A dashboard access token is exchanged for an HttpOnly session cookie.
+document.getElementById('dashboard-auth-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = document.getElementById('dashboard-access-token');
+    try {
+        const response = await fetch('/api/session', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:input.value}) });
+        if (!response.ok) throw new Error('Invalid dashboard access token');
+        input.value = '';
+        document.getElementById('dashboard-auth-panel').classList.add('hidden');
+        initWebSocket();
+    } catch(error) { document.getElementById('dashboard-auth-error').textContent = error.message; }
+});
+
+// Saved queries keep SQL and chart choices; credentials are never stored here.
+let savedQueries = readStored('rill_saved_queries', []);
+if (!Array.isArray(savedQueries)) savedQueries = [];
+const savedQuerySelect = document.getElementById('saved-queries-select');
+function renderSavedQueries() {
+    savedQuerySelect.replaceChildren(new Option('Select a saved query', ''));
+    savedQueries.forEach(query => savedQuerySelect.add(new Option(query.name, query.id)));
 }
+document.getElementById('save-query-btn').addEventListener('click', () => {
+    const sql = sqlQueryEditor.value.trim();
+    if (!sql) return;
+    const name = document.getElementById('query-name').value.trim() || sql.slice(0, 40);
+    const id = `saved-${Date.now()}`;
+    savedQueries.push({id, name, sql, type:queryChartType.value, xCol:queryXCol.value, yCol:queryYCol.value, colorCol:queryColorCol.value});
+    localStorage.setItem('rill_saved_queries', JSON.stringify(savedQueries));
+    renderSavedQueries(); savedQuerySelect.value = id;
+});
+savedQuerySelect.addEventListener('change', () => {
+    const query = savedQueries.find(item => item.id === savedQuerySelect.value);
+    if (!query) return;
+    sqlQueryEditor.value = query.sql;
+    document.getElementById('query-name').value = query.name;
+    queryChartType.value = query.type;
+});
+document.getElementById('delete-query-btn').addEventListener('click', () => {
+    savedQueries = savedQueries.filter(item => item.id !== savedQuerySelect.value);
+    localStorage.setItem('rill_saved_queries', JSON.stringify(savedQueries)); renderSavedQueries();
+});
+renderSavedQueries();

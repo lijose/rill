@@ -29,6 +29,10 @@ class BaseConnector(ABC):
             max_buffer_records: Optional maximum number of buffered rows before applying backpressure/overflow strategy.
             on_overflow: Strategy when buffer exceeds `max_buffer_records` ('drop_oldest', 'drop_newest', or 'error').
         """
+        if max_buffer_records is not None and (not isinstance(max_buffer_records, int) or isinstance(max_buffer_records, bool) or max_buffer_records <= 0):
+            raise ValueError("max_buffer_records must be a positive integer")
+        if on_overflow not in ("drop_oldest", "drop_newest", "error"):
+            raise ValueError("Unknown overflow strategy")
         self.target_table = target_table
         self.max_buffer_records = max_buffer_records
         self.on_overflow = on_overflow

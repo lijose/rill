@@ -1,15 +1,24 @@
 {
   "name": "rill-dashboard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Standalone web dashboard for Rill metrics via DuckDB Quack",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
-    "chartjs-plugin-zoom": "^2.2.0",
-    "duckdb": "^1.1.1",
-    "express": "^4.19.2",
-    "ws": "^8.21.1"
+    "chart.js": "4.5.1",
+    "chartjs-plugin-zoom": "2.2.0",
+    "hammerjs": "2.0.8",
+    "express": "4.22.2",
+    "ws": "8.21.1",
+    "ipaddr.js": "1.9.1"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -1,0 +1,55 @@
+name: Tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.10'
+            constraints: constraints/test-duckdb15.txt
+          - python: '3.12'
+            constraints: constraints/test-duckdb15.txt
+          - python: '3.12'
+            constraints: constraints/test-duckdb20.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: ${{ matrix.constraints }}
+      - run: python -m pip install -e '.[dev]' -c '${{ matrix.constraints }}'
+      - run: python -m pytest --timeout=30 -q
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: dashboard
+      - run: npm test
+        working-directory: dashboard
+  quack:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        constraints: [constraints/test-duckdb15.txt, constraints/test-duckdb20.txt]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]' -c '${{ matrix.constraints }}'
+      - run: python -m pytest tests/test_quack_integration.py --timeout=60 -q
+        env:
+          RILL_TEST_QUACK: '1'
